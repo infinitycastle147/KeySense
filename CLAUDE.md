@@ -23,9 +23,25 @@ Two things that differ from what you likely remember:
 
 - **Next.js 16 has breaking changes from your training data.** Read the relevant guide in
   `node_modules/next/dist/docs/` before writing routing, caching, or server-component code.
+- **Middleware is now called Proxy.** The file is `src/proxy.ts` exporting `proxy()`. A
+  `middleware.ts` is silently ignored — it will not error, it just never runs.
 - **shadcn v4 uses Base UI, not Radix.** Components come from `@base-ui/react`. Don't
   write Radix imports or Radix-specific props.
 - Tailwind v4 has **no `tailwind.config.*`** — theming lives in `src/app/globals.css`.
+
+## Supabase clients
+
+Three clients, in `src/lib/db/supabase/`. Picking the wrong one is a security bug:
+
+| Client | Key | Use |
+| --- | --- | --- |
+| `client.ts` | publishable | browser components |
+| `server.ts` | publishable + cookies | **default** for server components and route handlers — RLS applies |
+| `admin.ts` | secret | **bypasses RLS.** Only for cron rollups and backfills that run without a user session |
+
+`admin.ts` imports `server-only`, so importing it from a client component is a build
+error rather than a data breach. When using it, you must filter by `user_id` yourself —
+nothing else will.
 
 Add components with `npx shadcn@latest add <name>`. Never hand-write a component that
 shadcn already ships.
