@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeErrorTaxonomy, computeConfusionMatrix } from "./errors";
 import { charEvent } from "./test-utils";
+import type { KeyEvent } from "@/lib/types";
 
 describe("computeErrorTaxonomy", () => {
   it("returns all-zero taxonomy for empty input", () => {
@@ -57,9 +58,13 @@ describe("computeErrorTaxonomy", () => {
     expect(computeErrorTaxonomy(events)).toMatchObject({ insertion: 1 });
   });
 
-  it("classifies key === '' as omission", () => {
+  // The engine never emits a `key === ""` sentinel — omissions arrive as
+  // `missed` on the committing space instead (see the omission suite below).
+  // This asserts the sentinel is NOT the contract, so the old assumption
+  // cannot quietly return.
+  it("does not treat key === '' as an omission (engine never emits it)", () => {
     const events = [charEvent({ t: 0, expected: "a", key: "" })];
-    expect(computeErrorTaxonomy(events)).toMatchObject({ omission: 1 });
+    expect(computeErrorTaxonomy(events)).toMatchObject({ omission: 0 });
   });
 
   it("ignores backspace/word-delete and correct events", () => {
@@ -121,5 +126,43 @@ describe("computeConfusionMatrix", () => {
       charEvent({ t: 100, expected: "a", key: "" }), // omission
     ];
     expect(computeConfusionMatrix(events)).toEqual({});
+  });
+});
+
+// --- Regression: omissions must be reachable ---------------------------------
+// The engine never emits a `key === ""` sentinel; characters skipped by
+// committing a word early are carried as `missed` on the space event. Relying
+// on the sentinel left `omission` permanently zero, which would have silently
+// removed "you skip letters" from every diagnosis.
+describe("omission counting (integration with engine encoding)", () => {
+  const ev = (over: Partial<KeyEvent>): KeyEvent => ({
+    t: 0, key: "a", expected: "a", ok: true,
+    wordIdx: 0, charIdx: 0, prev: null, mods: [], kind: "char", ...over,
+  });
+
+  it("counts characters skipped by an early space", () => {
+    // "cat" typed as "ca" then space -> one omission
+    const events = [
+      ev({ t: 0, key: "c", expected: "c", charIdx: 0 }),
+      ev({ t: 100, key: "a", expected: "a", charIdx: 1 }),
+      ev({ t: 200, key: " ", expected: " ", ok: false, charIdx: 2, missed: 1 }),
+    ];
+    expect(computeErrorTaxonomy(events).omission).toBe(1);
+  });
+
+  it("counts multiple skipped characters", () => {
+    const events = [
+      ev({ t: 0, key: "c", expected: "c", charIdx: 0 }),
+      ev({ t: 100, key: " ", expected: " ", ok: false, charIdx: 1, missed: 4 }),
+    ];
+    expect(computeErrorTaxonomy(events).omission).toBe(4);
+  });
+
+  it("does not count omissions when words are completed", () => {
+    const events = [
+      ev({ t: 0, key: "c", expected: "c", charIdx: 0 }),
+      ev({ t: 100, key: " ", expected: " ", charIdx: 1 }),
+    ];
+    expect(computeErrorTaxonomy(events).omission).toBe(0);
   });
 });

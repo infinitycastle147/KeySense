@@ -14,14 +14,18 @@
  *     double-counted as substitutions below.
  *   - insertion: `expected === ""` — a character was produced where none was
  *     called for (typed past the end of the expected input).
- *   - omission: `key === ""` — a position that expected a character produced
- *     none (the engine emits this sentinel when a position was skipped, e.g.
- *     advancing to the next word without typing it).
+ *   - omission: characters skipped by committing a word early. These have no
+ *     keydown of their own, so they are NOT events — they are carried as
+ *     `KeyEvent.missed` on the space that advanced past the incomplete word,
+ *     and counted separately from the per-event classification below. (The
+ *     `key === ""` sentinel this module originally assumed is never emitted by
+ *     the engine; relying on it left `omission` permanently zero.)
  *   - substitution: everything else with `!ok` — a real (non-empty) wrong
  *     character was produced for a real (non-empty) expected character.
  *
- * These four buckets partition the `!ok` "char" events with no overlap, so
- * summing the taxonomy equals the total error count exactly.
+ * Substitution/insertion/transposition partition the `!ok` "char" events with
+ * no overlap. Omissions are additive on top, since they represent characters
+ * that were never typed at all.
  */
 
 import type { KeyEvent, ErrorTaxonomy, ConfusionMatrix, ErrorClass } from "@/lib/types";
@@ -63,8 +67,6 @@ function classifyEvents(events: KeyEvent[]): Map<number, ErrorClass> {
 
     if (e.expected === "") {
       classification.set(i, "insertion");
-    } else if (e.key === "") {
-      classification.set(i, "omission");
     } else {
       classification.set(i, "substitution");
     }
@@ -79,6 +81,13 @@ export function computeErrorTaxonomy(events: KeyEvent[]): ErrorTaxonomy {
   const classification = classifyEvents(events);
   for (const errorClass of classification.values()) {
     taxonomy[errorClass] += 1;
+  }
+  // Omissions are carried on the committing event rather than being events
+  // themselves — see the module header.
+  for (const event of events) {
+    if (event.kind === "char" && event.missed) {
+      taxonomy.omission += event.missed;
+    }
   }
   return taxonomy;
 }

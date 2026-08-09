@@ -34,6 +34,16 @@ export type KeyEvent = {
   prev: string | null;
   mods: string[];
   kind: KeyEventKind;
+  /**
+   * Expected characters skipped because this event committed a word early —
+   * set only on the space that advances past an incomplete word.
+   *
+   * Omissions produce no keydown of their own, so they cannot be their own
+   * event without putting synthetic keystrokes into the archive. Carrying the
+   * count on the committing event keeps the log honest (one record per real
+   * keydown) while leaving omissions derivable by the analysis layer.
+   */
+  missed?: number;
 };
 
 export type TestMode = "time" | "words" | "quote" | "zen" | "drill";
