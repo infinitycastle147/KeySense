@@ -4,9 +4,12 @@ node_modules/
 .pnp.js
 
 # Build output
+.next/
+out/
 dist/
 dist-ssr/
 build/
+next-env.d.ts
 *.local
 
 # Logs
