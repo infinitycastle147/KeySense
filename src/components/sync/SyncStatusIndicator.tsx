@@ -7,7 +7,7 @@
  * gated behind sign-in by src/proxy.ts.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { RefreshCwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,32 +22,49 @@ import {
   type SyncUiState,
 } from "@/lib/db/sync";
 
+function subscribeToConnectivity(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+
+/**
+ * Online-ness is browser state, so prerendering needs an explicit answer for
+ * it. `typeof navigator === "undefined"` is not that check any more — Node has
+ * shipped a global `navigator` since v21 and it has no `onLine`, so reading it
+ * during render produced `undefined`, the server prerendered "offline", the
+ * client hydrated "synced", and React threw a hydration mismatch.
+ *
+ * useSyncExternalStore makes the prerendered value a decision rather than an
+ * accident: assume online, then correct on the client the moment it hydrates.
+ */
+function useOnline(): boolean {
+  return useSyncExternalStore(
+    subscribeToConnectivity,
+    () => navigator.onLine,
+    () => true
+  );
+}
+
 export function SyncStatusIndicator() {
   const [pending, setPending] = useState<number | null>(null);
-  // Lazy initializer, not a setState call inside the effect below — `navigator`
-  // is only available client-side, but this component is already "use client".
-  const [online, setOnline] = useState(() =>
-    typeof navigator === "undefined" ? true : navigator.onLine
-  );
+  const online = useOnline();
   const [state, setState] = useState<SyncUiState>(getSyncState());
 
   const refreshCount = useCallback(() => {
     void getPendingCount().then(setPending);
   }, []);
 
+  // On mount, and again each time the network returns — SyncProvider fires a
+  // sync on `online`, so the backlog is about to change.
   useEffect(() => {
-    refreshCount();
+    if (online) refreshCount();
+  }, [online, refreshCount]);
 
-    function handleOnline() {
-      setOnline(true);
-      refreshCount();
-    }
-    function handleOffline() {
-      setOnline(false);
-    }
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-
+  useEffect(() => {
     const unsubState = onSyncStateChange(setState);
     const unsubResult = onSyncComplete(({ pushed, failed }) => {
       refreshCount();
@@ -61,8 +78,6 @@ export function SyncStatusIndicator() {
     });
 
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
       unsubState();
       unsubResult();
     };
