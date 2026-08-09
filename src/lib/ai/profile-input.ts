@@ -119,8 +119,16 @@ export function buildCompactProfile(
  * Every number the model is allowed to cite. The hallucination guard in
  * parse.ts checks findings against this set — see its header for why the set is
  * built here rather than re-walking the MetricProfile.
+ *
+ * The prescription context must be passed whenever one was sent to the model:
+ * the prompt asks it to open the summary with the previous cycle's
+ * baseline -> outcome figures, and a number the model is told to cite but that
+ * is missing from this set would be rejected as a hallucination.
  */
-export function collectAllowedNumbers(compact: CompactProfile): number[] {
+export function collectAllowedNumbers(
+  compact: CompactProfile,
+  extra?: unknown,
+): number[] {
   const out: number[] = [];
   const walk = (node: unknown): void => {
     if (typeof node === "number" && Number.isFinite(node)) {
@@ -132,5 +140,6 @@ export function collectAllowedNumbers(compact: CompactProfile): number[] {
     }
   };
   walk(compact);
+  if (extra !== undefined) walk(extra);
   return out;
 }

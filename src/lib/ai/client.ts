@@ -18,6 +18,7 @@ import { collectAllowedNumbers, type CompactProfile } from "./profile-input";
 import { validateReport } from "./parse";
 import { fixtureReport } from "./fixtures/report";
 import type { ParsedReport } from "./schema";
+import type { PrescriptionReportContext } from "@/lib/prescriptions/report-context";
 
 export type ReportSource = "live" | "fixture";
 
@@ -42,9 +43,13 @@ export class HallucinationError extends Error {
 
 export async function generateReport(
   compact: CompactProfile,
+  prescriptionContext?: PrescriptionReportContext,
 ): Promise<GeneratedReport> {
-  const userMessage = buildUserMessage(compact);
-  const allowed = collectAllowedNumbers(compact);
+  const userMessage = buildUserMessage(compact, prescriptionContext);
+  // The context is included because the prompt tells the model to cite the
+  // previous cycle's figures in the summary; omitting it here would make the
+  // guard reject the model for doing exactly what it was asked.
+  const allowed = collectAllowedNumbers(compact, prescriptionContext);
 
   // A payload this size means compaction regressed and raw data is leaking in.
   const payloadBytes = Buffer.byteLength(JSON.stringify(compact), "utf8");
@@ -61,7 +66,7 @@ export async function generateReport(
       source: "fixture",
       model: REPORT_MODEL,
       promptVersion: PROMPT_VERSION,
-      report: fixtureReport(compact),
+      report: fixtureReport(compact, prescriptionContext),
     };
   }
 

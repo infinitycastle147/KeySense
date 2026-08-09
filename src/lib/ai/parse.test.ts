@@ -117,3 +117,54 @@ describe("hallucination guard", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+// --- Regression: the summary is guarded too -----------------------------------
+// Phase 5's prompt asks the model to open the summary with the previous cycle's
+// "8.4% -> 3.1%". Those figures come from the prescription context rather than
+// the profile, and the summary was originally unchecked — so a fabricated
+// improvement claim, the most trust-carrying sentence in the report, would have
+// reached the user unexamined.
+describe("summary hallucination guard", () => {
+  it("rejects an invented figure in the summary", () => {
+    const result = validateReport(
+      {
+        summary: "Last cycle your error rate fell from 42.7% to 1.2%. Resolved.",
+        findings: [validFinding()],
+      },
+      allowed,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.rejectedFindings?.some((r) => r.startsWith("summary"))).toBe(true);
+    }
+  });
+
+  it("rejects a fabricated whole-number percentage", () => {
+    // A magnitude-based exemption would have let this through.
+    const result = validateReport(
+      { summary: "Error rate improved from 9% to 2%.", findings: [validFinding()] },
+      allowed,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts previous-cycle figures once the context is in the allowed set", () => {
+    const withContext = [...allowed, 0.084, 0.031];
+    const result = validateReport(
+      {
+        summary: "Last cycle: error rate 8.4% to 3.1%. Resolved.",
+        findings: [validFinding()],
+      },
+      withContext,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("lets the summary count its own findings", () => {
+    const result = validateReport(
+      { summary: "1 finding met the evidence threshold.", findings: [validFinding()] },
+      allowed,
+    );
+    expect(result.ok).toBe(true);
+  });
+});

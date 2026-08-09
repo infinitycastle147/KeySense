@@ -17,6 +17,8 @@ import { MIN_FINDING_N } from "@/lib/analysis/stats";
 import { buildCompactProfile } from "@/lib/ai/profile-input";
 import { generateReport, HallucinationError } from "@/lib/ai/client";
 import { MIN_TESTS_FOR_REPORT } from "@/lib/ai/model";
+import { buildPrescriptionReportContext } from "@/lib/prescriptions/report-context";
+import { rowToPrescription } from "@/lib/prescriptions/store";
 import type { CompletedTest, KeyEvent } from "@/lib/types";
 
 const WINDOW_SIZE = 50;
@@ -131,8 +133,20 @@ export async function POST() {
   const profile = buildMetricProfile(analyses);
   const compact = buildCompactProfile(profile, MIN_FINDING_N);
 
+  // Phase 5 closed loop (docs/ARCHITECTURE.md §7): the report opens with the
+  // previous prescription cycle's result, when there is one. A failure here
+  // must never block report generation itself — an empty context just means
+  // the report reads like a first-ever report.
+  const { data: prescriptionRows } = await supabase
+    .from("prescriptions")
+    .select("*")
+    .order("created_at", { ascending: false });
+  const prescriptionContext = buildPrescriptionReportContext(
+    (prescriptionRows ?? []).map(rowToPrescription),
+  );
+
   try {
-    const generated = await generateReport(compact);
+    const generated = await generateReport(compact, prescriptionContext);
 
     const { data: saved, error: saveError } = await supabase
       .from("reports")

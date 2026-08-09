@@ -12,12 +12,26 @@
 
 import type { CompactProfile } from "../profile-input";
 import type { ParsedReport } from "../schema";
+import type { PrescriptionReportContext } from "@/lib/prescriptions/report-context";
 
 function pct(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
 
-export function fixtureReport(compact: CompactProfile): ParsedReport {
+/** Prefixes the fixture summary with the same "previous cycle" opening a
+ *  live report would use (see src/lib/ai/prompt.ts) — built from real
+ *  prescription data, not hardcoded, so the closed loop is demonstrable with
+ *  no API key configured. */
+function prescriptionOpening(context?: PrescriptionReportContext): string {
+  if (!context?.lastCompleted) return "";
+  const c = context.lastCompleted;
+  return `Last cycle flagged ${c.targetType} [${c.targets.join(", ")}]. You completed ${c.drillsCompleted} targeted sessions. Error rate ${pct(c.baselineErrorRate)} -> ${pct(c.outcomeErrorRate)}. ${c.verdict[0].toUpperCase()}${c.verdict.slice(1)}. `;
+}
+
+export function fixtureReport(
+  compact: CompactProfile,
+  prescriptionContext?: PrescriptionReportContext,
+): ParsedReport {
   const findings: ParsedReport["findings"] = [];
 
   const worstBigram = compact.worstBigrams[0];
@@ -86,7 +100,7 @@ export function fixtureReport(compact: CompactProfile): ParsedReport {
   }
 
   return {
-    summary: `Reviewed ${compact.testCount} tests. ${findings.length} finding${findings.length === 1 ? "" : "s"} met the evidence threshold.`,
+    summary: `${prescriptionOpening(prescriptionContext)}Reviewed ${compact.testCount} tests. ${findings.length} finding${findings.length === 1 ? "" : "s"} met the evidence threshold.`,
     findings,
   };
 }

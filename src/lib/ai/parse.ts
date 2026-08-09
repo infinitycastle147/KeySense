@@ -16,11 +16,17 @@ import { reportSchema, type ParsedReport } from "./schema";
 
 /**
  * Display rounding means the model legitimately writes 8.4% for 0.08421, so
- * exact equality would reject correct output. Matching is therefore tolerant,
- * but only to the precision a human would actually read.
+ * exact equality would reject correct output. Relative tolerance covers that:
+ * 0.084 vs 0.08421 is a 0.25% difference, well inside 2%.
+ *
+ * The absolute tolerance exists only so values at or near zero can match at
+ * all, where a relative comparison is meaningless. It must stay tiny — at 0.05
+ * a fabricated "9%" matched a real rate of 0.084, because the absolute gap is
+ * 0.006. Rates live in 0..1, so a loose absolute bound silently accepts
+ * invented percentages across a wide band.
  */
 const RELATIVE_TOLERANCE = 0.02;
-const ABSOLUTE_TOLERANCE = 0.05;
+const ABSOLUTE_TOLERANCE = 0.0005;
 
 export type ValidationResult =
   | { ok: true; report: ParsedReport }
@@ -67,6 +73,22 @@ export function validateReport(raw: unknown, allowed: number[]): ValidationResul
   }
 
   const rejected: string[] = [];
+
+  // The summary is checked too, not just evidence. Since Phase 5 the prompt
+  // asks the model to open it with the previous cycle's "8.4% -> 3.1%" — the
+  // most trust-carrying sentence in the report. Leaving it unguarded would let
+  // a fabricated figure through in exactly the place it does most damage.
+  //
+  // The only number the summary may cite that isn't in the profile is how many
+  // findings it contains, which it can legitimately count. Everything else is
+  // held to the same standard as evidence: an exemption by magnitude would let
+  // a fabricated "8%" through, since that is a small integer too.
+  const summaryAllowed = [...allowed, parsed.data.findings.length];
+  for (const num of extractNumbers(parsed.data.summary)) {
+    if (!isCitable(num, summaryAllowed)) {
+      rejected.push(`summary cites ${num}, not in profile`);
+    }
+  }
 
   for (const finding of parsed.data.findings) {
     for (const ev of finding.evidence) {

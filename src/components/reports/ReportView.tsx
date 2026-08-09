@@ -34,6 +34,25 @@ export function ReportView() {
   const [report, setReport] = useState<ReportResponse | null>(null);
   const [error, setError] = useState<ErrorResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  // Phase 5 closed loop (docs/ARCHITECTURE.md §7): a finding becomes a
+  // prescription with one click. Keyed by finding id so each card tracks its
+  // own request/result independently.
+  const [prescribing, setPrescribing] = useState<Record<string, "pending" | "done" | "error">>({});
+
+  async function prescribe(findingId: string) {
+    if (!report) return;
+    setPrescribing((prev) => ({ ...prev, [findingId]: "pending" }));
+    try {
+      const res = await fetch("/api/prescriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId: report.id, findingId }),
+      });
+      setPrescribing((prev) => ({ ...prev, [findingId]: res.ok ? "done" : "error" }));
+    } catch {
+      setPrescribing((prev) => ({ ...prev, [findingId]: "error" }));
+    }
+  }
 
   async function generate() {
     setLoading(true);
@@ -124,6 +143,23 @@ export function ReportView() {
                     </div>
                   ))}
                 </dl>
+
+                {/* Closes the loop (docs/ARCHITECTURE.md §7): turns this
+                    finding into a tracked prescription — see /progress. */}
+                <div className="mt-4 flex items-center gap-3 border-t border-border pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={prescribing[finding.id] === "pending" || prescribing[finding.id] === "done"}
+                    onClick={() => prescribe(finding.id)}
+                  >
+                    {prescribing[finding.id] === "done" ? "prescribed" : "prescribe drill"}
+                  </Button>
+                  {prescribing[finding.id] === "error" && (
+                    <span className="label-type text-flag">could not create prescription</span>
+                  )}
+                </div>
               </section>
             ))}
           </div>
