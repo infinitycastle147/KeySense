@@ -196,6 +196,19 @@ export function TypingTest({
     if (words) inputRef.current?.focus();
   }, [words]);
 
+  // Tell the shell to get out of the way — docs/DESIGN.md §7: no chrome while
+  // a test is running. Signalled through a body attribute rather than React
+  // context so the nav never re-renders on the typing path; it fades in CSS.
+  // Fires on status transitions only, not per keystroke.
+  useEffect(() => {
+    const running = status === "running";
+    if (running) document.body.dataset.typing = "true";
+    else delete document.body.dataset.typing;
+    return () => {
+      delete document.body.dataset.typing;
+    };
+  }, [status]);
+
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
       const native = e.nativeEvent;
@@ -278,9 +291,17 @@ export function TypingTest({
         )}
       </div>
 
-      {status === "waiting" && words && (
-        <p className="label-type text-muted-foreground">start typing to begin</p>
-      )}
+      {/* Kept in flow and faded rather than unmounted. Removing it shortened
+          the vertically-centred column, so the words jumped down ~25px on the
+          first keystroke — the worst possible moment for the text to move. */}
+      <p
+        aria-hidden={!(status === "waiting" && words)}
+        className={`label-type text-muted-foreground transition-opacity duration-200 ${
+          status === "waiting" && words ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        start typing to begin
+      </p>
     </div>
   );
 }

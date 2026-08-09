@@ -3,6 +3,7 @@ import { Instrument_Sans, JetBrains_Mono, Martian_Mono } from "next/font/google"
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { SyncProvider } from "@/components/sync/SyncProvider";
+import { AppNav } from "@/components/nav/AppNav";
 
 // Three roles, three families — see docs/DESIGN.md §3.
 const instrumentSans = Instrument_Sans({
@@ -40,7 +41,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        {children}
+        <AppNav />
+        <div className="flex flex-1 flex-col">{children}</div>
         {/* Invisible — no chrome added to the sacred test screen (docs/DESIGN.md
             §7). Owns the sign-in-flush and window.online sync triggers
             (PHASE-2.md §4); "on test completion" is wired in

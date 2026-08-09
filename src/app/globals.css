@@ -198,6 +198,14 @@
   }
 }
 
+/* The test screen is sacred (docs/DESIGN.md §7): the shell gets out of the way
+   while a test runs. It fades rather than unmounting so the bar keeps its
+   height and the text below does not jump on the first keystroke. */
+body[data-typing="true"] [data-app-nav] {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* Respect reduced motion everywhere — docs/DESIGN.md §6. */
 @media (prefers-reduced-motion: reduce) {
   *,
