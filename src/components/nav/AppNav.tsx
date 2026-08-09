@@ -15,10 +15,15 @@
  *
  * No amber here. `--trace` is reserved for the waveform and primary actions
  * (docs/DESIGN.md §2); the active route reads through weight and colour instead.
+ *
+ * The trailing slot is the account control (AccountMenu) — the shell is the
+ * only surface that appears on every route, so it is where "who am I signed in
+ * as, and how do I get out" belongs.
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { AccountMenu } from "@/components/nav/AccountMenu";
 
 const ROUTES = [
   { href: "/", label: "test" },
@@ -65,6 +70,8 @@ export function AppNav() {
           );
         })}
       </ul>
+
+      <AccountMenu />
     </nav>
   );
 }
