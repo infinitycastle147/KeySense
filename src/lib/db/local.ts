@@ -61,12 +61,35 @@ function fromStored(stored: StoredTest): CompletedTest {
   return test;
 }
 
+/**
+ * Fires a best-effort background sync after a local write. `saveTest` is only
+ * called once, at test completion (see docs/ARCHITECTURE.md §3.2/§3.3), so
+ * this can never fire mid-test — it is the "on test completion" trigger from
+ * PHASE-2.md §4. `syncPending` itself no-ops when signed out, so "if online
+ * and signed in" is enforced there, not here.
+ *
+ * Dynamic import keeps this module (and its callers, e.g. the typing engine)
+ * free of a static dependency on the Supabase client, and avoids a circular
+ * static import with sync.ts, which imports `getUnsyncedTests`/`markSynced`
+ * from this file.
+ */
+function triggerBackgroundSync(): void {
+  if (typeof window === "undefined" || !navigator.onLine) return;
+  void import("./sync")
+    .then((sync) => sync.syncPending())
+    .catch(() => {
+      // Surfaced via the sync status UI (src/components/sync/), not here —
+      // a failed background sync must never throw into the caller of saveTest.
+    });
+}
+
 /** Persist a completed test. Idempotent — writing the same `id` twice overwrites
  *  rather than duplicating, matching the append-only-by-UUID sync model
  *  (docs/ARCHITECTURE.md §3.3). */
 export async function saveTest(test: CompletedTest): Promise<void> {
   const db = await getDb();
   await db.put(STORE, toStored(test));
+  triggerBackgroundSync();
 }
 
 export async function getTest(id: string): Promise<CompletedTest | undefined> {

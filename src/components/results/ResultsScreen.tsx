@@ -4,12 +4,13 @@
  * The reward screen — docs/DESIGN.md §10: "results screen is the reward,"
  * motion and colour belong here, not on the test screen.
  *
- * Phase 1 owns headline stats only. The cardiograph replay (docs/DESIGN.md §5,
- * the product's signature) is Phase 3's, once bigram/inter-key data has
- * somewhere to feed into — the marked placeholder below is where it mounts.
+ * Phase 1 owns headline stats. The cardiograph replay (docs/DESIGN.md §5, the
+ * product's signature) is Phase 3's — it mounts below the headline stats,
+ * replaying the raw event log as a waveform.
  */
 
 import { Button } from "@/components/ui/button";
+import { Trace } from "@/components/results/Trace";
 import type { CompletedTest } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -68,13 +69,8 @@ export function ResultsScreen({ test, onRestart }: ResultsScreenProps) {
         <span>n={test.events.length} events</span>
       </div>
 
-      {/* Phase 3 mounts the cardiograph trace replay here — docs/DESIGN.md §5.
-          Left empty and sized so the layout doesn't jump once it lands. */}
-      <div
-        data-testid="trace-placeholder"
-        className="h-40 w-full rounded-md bg-chassis ring-1 ring-grid"
-        aria-hidden="true"
-      />
+      {/* The cardiograph replay — docs/DESIGN.md §5, the product's signature. */}
+      <Trace events={test.events} durationMs={test.durationMs} className="max-w-3xl" />
 
       <Button type="button" size="lg" onClick={onRestart} autoFocus>
         new test

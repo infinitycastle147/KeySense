@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Instrument_Sans, JetBrains_Mono, Martian_Mono } from "next/font/google";
 import "./globals.css";
+import { Toaster } from "@/components/ui/sonner";
+import { SyncProvider } from "@/components/sync/SyncProvider";
 
 // Three roles, three families — see docs/DESIGN.md §3.
 const instrumentSans = Instrument_Sans({
@@ -37,7 +39,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`dark ${instrumentSans.variable} ${jetbrainsMono.variable} ${martianMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        {/* Invisible — no chrome added to the sacred test screen (docs/DESIGN.md
+            §7). Owns the sign-in-flush and window.online sync triggers
+            (PHASE-2.md §4); "on test completion" is wired in
+            src/lib/db/local.ts instead, where the trigger actually happens. */}
+        <SyncProvider />
+        {/* Sync never runs mid-test (saveTest only fires at completion), so a
+            failure toast can only appear before or after typing, never during
+            it — consistent with the sacred-test-screen rule above. */}
+        <Toaster />
+      </body>
     </html>
   );
 }

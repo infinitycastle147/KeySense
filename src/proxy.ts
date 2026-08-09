@@ -34,9 +34,23 @@ export async function proxy(request: NextRequest) {
 
   // Do not insert code between createServerClient and getClaims(). Anything
   // that touches cookies in between causes intermittent, hard-to-debug logouts.
-  await supabase.auth.getClaims();
+  const { data: claims } = await supabase.auth.getClaims();
 
-  // No auth redirect yet — routes are public until Phase 2 adds sign-in.
+  // The test screen (`/`) and the auth flow itself must stay public — typing
+  // works with no account, results are held locally until sign-in
+  // (PHASE-2.md §1, docs/ARCHITECTURE.md §3.3). Everything else (history,
+  // dashboard, …) holds a signed-in user's data and requires a session.
+  const { pathname } = request.nextUrl;
+  const isPublic =
+    pathname === "/" ||
+    pathname === "/login" ||
+    pathname.startsWith("/auth/");
+
+  if (!claims && !isPublic) {
+    const loginUrl = new URL("/login", request.url);
+    return NextResponse.redirect(loginUrl);
+  }
+
   return response;
 }
 
