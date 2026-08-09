@@ -9,6 +9,7 @@
  * replaying the raw event log as a waveform.
  */
 
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Trace } from "@/components/results/Trace";
 import type { CompletedTest } from "@/lib/types";
@@ -50,6 +51,23 @@ export function ResultsScreen({ test, onRestart }: ResultsScreenProps) {
   const { result, config } = test;
   const seconds = test.durationMs / 1000;
 
+  // Exactly one shortcut, and the button is not autofocused — otherwise the
+  // trailing space of the last word activates it and the results the user just
+  // earned are gone before they've read them.
+  useEffect(() => {
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      // A focused button/link fires its own Enter; don't restart twice.
+      if (e.target instanceof HTMLElement && e.target.closest("button, a, input, textarea")) {
+        return;
+      }
+      e.preventDefault();
+      onRestart();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onRestart]);
+
   return (
     <div className="flex w-full max-w-4xl flex-col items-center gap-10 py-12 animate-in fade-in duration-500">
       <div className="flex flex-wrap items-end justify-center gap-x-16 gap-y-8">
@@ -72,8 +90,8 @@ export function ResultsScreen({ test, onRestart }: ResultsScreenProps) {
       {/* The cardiograph replay — docs/DESIGN.md §5, the product's signature. */}
       <Trace events={test.events} durationMs={test.durationMs} className="max-w-3xl" />
 
-      <Button type="button" size="lg" onClick={onRestart} autoFocus>
-        new test
+      <Button type="button" size="lg" onClick={onRestart}>
+        new test <span className="ml-2 text-sm opacity-70">enter</span>
       </Button>
     </div>
   );
