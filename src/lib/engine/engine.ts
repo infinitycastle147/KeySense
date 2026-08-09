@@ -157,14 +157,28 @@ export function createEngine(
 
   /** Single-character backspace. At the start of a word, steps back into the
    *  previous word (freedom-mode style correction) rather than doing nothing —
-   *  monkeytype's reference behaviour, see docs/ARCHITECTURE.md §1. */
+   *  monkeytype's reference behaviour, see docs/ARCHITECTURE.md §1.
+   *
+   *  Stepping back is a *pure caret move*: it returns immediately without
+   *  deleting. Two reasons. Deleting would eat a character the user typed
+   *  correctly, when the reason they pressed backspace is usually to return to
+   *  a word they left early. And moving the caret is itself a state change, so
+   *  it must report `true` — the previous version fell through to a `cIdx === 0`
+   *  guard that returned `false` *after* having already moved `wordIdx`, so the
+   *  engine's cursor moved while the caller skipped `notify()`. The visible
+   *  symptom was a backspace that did nothing, followed by one that jumped two
+   *  words at once.
+   *
+   *  Because a step-back deletes nothing, it emits no event — §3.1 records one
+   *  event per keydown that produces or deletes a character, and this does
+   *  neither. */
   function handleBackspace(t: number, mods: string[]): boolean {
     if ((typed[wordIdx]?.length ?? 0) === 0) {
       if (wordIdx === 0) return false;
       wordIdx -= 1;
+      return true;
     }
     const cIdx = typed[wordIdx].length;
-    if (cIdx === 0) return false;
     const removedChar = typed[wordIdx][cIdx - 1];
     const expected = expectedAt(wordIdx, cIdx - 1);
     const wasOk = expected !== "" && removedChar === expected;

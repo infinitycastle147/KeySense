@@ -89,7 +89,7 @@ describe("engine — backspace", () => {
     });
   });
 
-  it("steps back into the previous word when backspacing at the start of a word", () => {
+  it("steps back into the previous word without deleting from it", () => {
     const engine = createEngine(config, ["cat", "dog"]);
     for (const c of "cat") engine.handleKeyDown(key(c));
     engine.handleKeyDown(key(" ")); // commit "cat", advance to "dog"
@@ -98,7 +98,63 @@ describe("engine — backspace", () => {
     engine.handleKeyDown(key("Backspace")); // nothing typed in "dog" yet
     const state = engine.getState();
     expect(state.wordIdx).toBe(0);
-    expect(state.typed[0]).toBe("ca");
+    // The caret moves to the end of "cat"; the correctly-typed 't' survives.
+    // Returning to a word you left early should not cost you a character.
+    expect(state.typed[0]).toBe("cat");
+  });
+
+  it("deletes only once the caret is inside the previous word", () => {
+    const engine = createEngine(config, ["cat", "dog"]);
+    for (const c of "cat") engine.handleKeyDown(key(c));
+    engine.handleKeyDown(key(" "));
+    engine.handleKeyDown(key("Backspace")); // step back only
+    engine.handleKeyDown(key("Backspace")); // now delete
+    expect(engine.getState().typed[0]).toBe("ca");
+  });
+
+  it("emits no event for a step-back, which deletes nothing", () => {
+    const engine = createEngine(config, ["cat", "dog"]);
+    for (const c of "cat") engine.handleKeyDown(key(c));
+    engine.handleKeyDown(key(" "));
+    const before = engine.getEvents().length;
+    engine.handleKeyDown(key("Backspace"));
+    // §3.1: one event per keydown that produces or deletes a character.
+    expect(engine.getEvents().length).toBe(before);
+  });
+
+  // Regression: backspacing out of a skipped word used to move `wordIdx`
+  // internally and then return false, so the caller skipped notify(). The
+  // caret froze on screen while the engine's cursor had already moved, and the
+  // next backspace appeared to jump two words at once.
+  it("moves the caret one word at a time back through a skipped word", () => {
+    const engine = createEngine(config, ["cat", "dog", "run"]);
+    for (const c of "cat") engine.handleKeyDown(key(c));
+    engine.handleKeyDown(key(" ")); // -> "dog"
+    engine.handleKeyDown(key(" ")); // skip "dog" entirely -> "run"
+    expect(engine.getState().wordIdx).toBe(2);
+
+    expect(engine.handleKeyDown(key("Backspace"))).not.toBe(false);
+    expect(engine.getState().wordIdx).toBe(1); // lands on the skipped word
+
+    engine.handleKeyDown(key("Backspace"));
+    expect(engine.getState().wordIdx).toBe(0); // then onto "cat", not past it
+    expect(engine.getState().typed[0]).toBe("cat");
+  });
+
+  it("notifies subscribers when a step-back moves the caret", () => {
+    const engine = createEngine(config, ["cat", "dog"]);
+    for (const c of "cat") engine.handleKeyDown(key(c));
+    engine.handleKeyDown(key(" "));
+
+    let notifications = 0;
+    const unsubscribe = engine.subscribe(() => {
+      notifications += 1;
+    });
+    engine.handleKeyDown(key("Backspace"));
+    unsubscribe();
+
+    // Without this the UI never learns the caret moved — the reported symptom.
+    expect(notifications).toBeGreaterThan(0);
   });
 
   it("is a no-op at the very start of the test", () => {
