@@ -17,7 +17,7 @@ surfaces, or scale infrastructure.
 ## Stack
 
 Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · shadcn/ui v4 · Supabase
-(Postgres) · IndexedDB · Claude API.
+(Postgres) · IndexedDB · OpenRouter.
 
 Two things that differ from what you likely remember:
 
@@ -94,7 +94,7 @@ Budget: **< 16ms** keydown to caret paint. If a change touches the input path, m
 - The system prompt must instruct: *use only the numbers provided; never compute or invent
   a figure.*
 - Every report row persists `model`, `prompt_version`, and `input_profile` for audit.
-- **The Anthropic API key never reaches the client.** All model calls go through route
+- **The model provider API key never reaches the client.** All model calls go through route
   handlers.
 
 ### 6. Prescriptions capture their baseline at creation time

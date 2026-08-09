@@ -293,11 +293,11 @@ baseline has to be captured at the moment of prescription.
 
 | Layer | Choice | Reasoning |
 | --- | --- | --- |
-| Framework | **Next.js 16 (App Router)** | Server routes are required to hold the Anthropic API key; dashboard is data-heavy and benefits from server rendering; Vercel Cron handles nightly rollups. |
+| Framework | **Next.js 16 (App Router)** | Server routes are required to hold the model provider API key; dashboard is data-heavy and benefits from server rendering; Vercel Cron handles nightly rollups. |
 | UI | **shadcn/ui v4 + Tailwind v4** | Owned components, no black-box library. Note: v4 uses **Base UI**, not Radix. |
 | DB / Auth | **Supabase (Postgres)** | Aggregation here is inherently relational (group by bigram, window over last N tests). Postgres does this natively; Firestore would fight it. JSONB holds raw events. Auth handles multi-device sessions. |
 | Local store | **IndexedDB** | Offline write-ahead queue (§3.3). |
-| AI | **Claude API**, server-side only | Never expose the key to the browser. |
+| AI | **OpenRouter**, server-side only | One API across vendors, so the model is a config value rather than a code dependency. Never expose the key to the browser. |
 
 **The API key never reaches the client.** All model calls go through Next.js route
 handlers.

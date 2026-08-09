@@ -10,7 +10,7 @@ import "server-only";
  * thin to make a good drill — see `isPoolWeak`.
  *
  * Same treatment as Phase 4 (src/lib/ai/client.ts): there is no
- * ANTHROPIC_API_KEY yet, so the live branch is written but never exercised.
+ * OPENROUTER_API_KEY yet, so the live branch is written but never exercised.
  * Callers with no key get a clearly-flagged fixture instead of a fabricated
  * "real" drill.
  *
@@ -24,7 +24,7 @@ import "server-only";
  * TODO(ai-key): `grep -rn "TODO(ai-key)"` lists the full activation checklist.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { OpenRouter } from "@openrouter/sdk";
 import { isLiveAIEnabled } from "@/lib/ai/client";
 import { REPORT_MODEL } from "@/lib/ai/model";
 
@@ -61,27 +61,38 @@ export async function generateDrillSentences(
   }
 
   // TODO(ai-key): unverified — this branch has never executed. Before
-  // trusting it: set ANTHROPIC_API_KEY in .env.local, run it once, confirm
+  // trusting it: set OPENROUTER_API_KEY in .env.local, run it once, confirm
   // the sentences actually lean on the targets and read naturally (not word
   // salad — the whole reason this mechanism exists), and sanity-check the
   // returned line count against `count`.
-  const client = new Anthropic();
-  const response = await client.messages.create({
-    model: REPORT_MODEL,
-    max_tokens: 500,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Write ${count} short sentences (8-14 words each) that naturally emphasise: ${targets.join(", ")}.`,
-      },
-    ],
+  const client = new OpenRouter({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    appTitle: "KeySense",
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
+  const response = await client.chat.send({
+    chatRequest: {
+      model: REPORT_MODEL,
+      maxTokens: 500,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `Write ${count} short sentences (8-14 words each) that naturally emphasise: ${targets.join(", ")}.`,
+        },
+      ],
+    },
+  });
+
+  // Narrow away the streaming variant — this request does not set stream.
+  if (!("choices" in response)) {
+    throw new Error("unexpected streaming response from OpenRouter");
+  }
+
+  const content = response.choices?.[0]?.message?.content;
   const sentences =
-    textBlock && textBlock.type === "text"
-      ? textBlock.text
+    typeof content === "string"
+      ? content
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean)

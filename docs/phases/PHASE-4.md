@@ -1,13 +1,13 @@
 # Phase 4 — AI diagnosis (built, but not live)
 
-**Goal:** the full report pipeline, complete and tested, with the single network call to
-Claude stubbed behind a flag.
+**Goal:** the full report pipeline, complete and tested, with the single network call to the model
+provider stubbed behind a flag.
 
 **Depends on:** Phase 3's `MetricProfile`.
 
 > ## The key constraint for this phase
 >
-> **There is no `ANTHROPIC_API_KEY` yet.** Build everything around the call so that adding
+> **There is no `OPENROUTER_API_KEY` yet.** Build everything around the call so that adding
 > the key later is a one-line change and nothing else.
 >
 > - Everything except the network call must be **pure and unit tested**: profile
@@ -52,13 +52,13 @@ Use structured tool-use / JSON output matching `Finding[]` from `types.ts`.
 
 ```ts
 export function isLiveAIEnabled(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(process.env.OPENROUTER_API_KEY);
 }
 ```
 
 - `import "server-only"` at the top — the key must never reach the browser.
-- Model: **`claude-opus-5`**. Keep the id in one exported constant.
-- `@anthropic-ai/sdk` is installed.
+- Model: an OpenRouter `vendor/model` id in one exported constant, overridable via `OPENROUTER_MODEL`. Set `provider.requireParameters` so a provider that ignores `json_schema` is skipped rather than silently returning prose.
+- `@openrouter/sdk` is installed. The model is an OpenRouter `vendor/model` id, configurable via `OPENROUTER_MODEL`.
 - `TODO(ai-key):` on the live branch, noting: set key in `.env.local`, verify a real call,
   check token usage, then remove the fixture fallback default.
 
@@ -75,7 +75,7 @@ a deliberately-hallucinating fixture.
 2. Load last 20–50 tests, build `MetricProfile`
 3. Refuse with a clear message if `testCount` is too low — an honest "not enough data yet"
    beats a fabricated diagnosis
-4. Call Claude *or* return the fixture
+4. Call the model *or* return the fixture
 5. Persist to `reports`: `findings`, `prose`, `model`, `prompt_version`, `input_profile`
 6. Return the report
 
@@ -101,6 +101,6 @@ Drill generation and prescriptions (Phase 5). Do not modify `src/lib/analysis/`.
 - [ ] Everything but the network call is unit tested
 - [ ] Test proves raw events never enter the payload
 - [ ] Validator rejects hallucinated numbers — with a test
-- [ ] App works fully with no `ANTHROPIC_API_KEY`, returning flagged fixtures
+- [ ] App works fully with no `OPENROUTER_API_KEY`, returning flagged fixtures
 - [ ] `grep -rn "TODO(ai-key)"` returns a complete activation checklist
 - [ ] `npm run typecheck && npm run lint && npm test && npm run build` all clean
