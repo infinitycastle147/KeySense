@@ -17,6 +17,7 @@ import { MAX_PROFILE_BYTES, PROMPT_VERSION, REPORT_MODEL } from "./model";
 import { buildUserMessage, SYSTEM_PROMPT } from "./prompt";
 import { collectAllowedNumbers, type CompactProfile } from "./profile-input";
 import { validateReport } from "./parse";
+import { withRetry } from "./retry";
 import { fixtureReport } from "./fixtures/report";
 import type { ParsedReport } from "./schema";
 import type { PrescriptionReportContext } from "@/lib/prescriptions/report-context";
@@ -75,23 +76,28 @@ export async function generateReport(
   // and the hallucination guard passes on genuine output, ~10s per report.
   const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  const response = await client.models.generateContent({
-    model: REPORT_MODEL,
-    contents: userMessage,
-    config: {
-      // Gemini takes the system prompt as config, not as a message with a
-      // role — there is no "system" role in `contents`.
-      systemInstruction: SYSTEM_PROMPT,
-      // Both are required together: a schema without the mime type is ignored.
-      responseMimeType: "application/json",
-      responseJsonSchema: reportJsonSchema,
-      // Thinking tokens are drawn from this same budget, so it has to cover the
-      // reasoning as well as the report. Too low and generation stops mid-JSON
-      // with finishReason MAX_TOKENS, which reads downstream as a parse error
-      // rather than as the truncation it is — hence the explicit check below.
-      maxOutputTokens: 16000,
-    },
-  });
+  // Only the network call is retried, never the validation below it: a report
+  // that cited a fabricated figure is a real failure, and asking again would
+  // just buy a second opinion on whether to trust the model.
+  const response = await withRetry(() =>
+    client.models.generateContent({
+      model: REPORT_MODEL,
+      contents: userMessage,
+      config: {
+        // Gemini takes the system prompt as config, not as a message with a
+        // role — there is no "system" role in `contents`.
+        systemInstruction: SYSTEM_PROMPT,
+        // Both are required together: a schema without the mime type is ignored.
+        responseMimeType: "application/json",
+        responseJsonSchema: reportJsonSchema,
+        // Thinking tokens are drawn from this same budget, so it has to cover the
+        // reasoning as well as the report. Too low and generation stops mid-JSON
+        // with finishReason MAX_TOKENS, which reads downstream as a parse error
+        // rather than as the truncation it is — hence the explicit check below.
+        maxOutputTokens: 16000,
+      },
+    }),
+  );
 
   if (response.candidates?.[0]?.finishReason === "MAX_TOKENS") {
     throw new Error(

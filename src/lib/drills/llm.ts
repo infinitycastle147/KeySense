@@ -24,6 +24,7 @@ import "server-only";
 import { GoogleGenAI } from "@google/genai";
 import { isLiveAIEnabled } from "@/lib/ai/client";
 import { DRILL_MODEL } from "@/lib/ai/model";
+import { withRetry } from "@/lib/ai/retry";
 
 export type DrillSentenceSource = "live" | "fixture";
 
@@ -62,17 +63,19 @@ export async function generateDrillSentences(
   // which is the only reason this mechanism exists.
   const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  const response = await client.models.generateContent({
-    model: DRILL_MODEL,
-    contents: `Write ${count} short sentences (8-14 words each) that naturally emphasise: ${targets.join(", ")}.`,
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      // Generous next to ~5 short sentences because thinking tokens come out of
-      // the same budget; a truncated last line would otherwise reach the caller
-      // as a real drill sentence.
-      maxOutputTokens: 4000,
-    },
-  });
+  const response = await withRetry(() =>
+    client.models.generateContent({
+      model: DRILL_MODEL,
+      contents: `Write ${count} short sentences (8-14 words each) that naturally emphasise: ${targets.join(", ")}.`,
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        // Generous next to ~5 short sentences because thinking tokens come out of
+        // the same budget; a truncated last line would otherwise reach the caller
+        // as a real drill sentence.
+        maxOutputTokens: 4000,
+      },
+    }),
+  );
 
   const content = response.text;
   const sentences =
