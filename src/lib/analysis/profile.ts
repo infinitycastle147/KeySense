@@ -420,9 +420,23 @@ function mergeCorrections(analyses: TestAnalysis[]): { backspaceRate: number; me
  * be treated as a real weakness regardless of an accompanying flag.
  */
 function rankByBadness<T extends BigramStat | KeyStat>(stats: T[], topN: number): T[] {
-  const eligible = stats.filter((s) => s.n >= MIN_FINDING_N);
-  return rankWeaknesses(eligible)
+  return rankWeaknesses(stats.filter((s) => s.n >= MIN_FINDING_N))
     .filter((r) => r.significant)
+    .slice(0, topN)
+    .map((r) => r.row);
+}
+
+/**
+ * The same ranking with the FDR verdict reported rather than applied.
+ *
+ * A dashboard is not a findings list. Applying the discovery gate to it makes
+ * "nothing is confidently a fluke-free finding yet" render identically to "no
+ * data" — which is how the key heatmap came to paint an empty keyboard while
+ * 21 keys sat above n=30. Callers here have already earned their n; what they
+ * need is the order, not the verdict.
+ */
+function rankForDisplay<T extends BigramStat | KeyStat>(stats: T[], topN: number): T[] {
+  return rankWeaknesses(stats.filter((s) => s.n >= MIN_FINDING_N))
     .slice(0, topN)
     .map((r) => r.row);
 }
@@ -633,6 +647,8 @@ function emptyProfile(bucketSeconds: number): MetricProfile {
     },
     worstBigrams: [],
     worstKeys: [],
+    bigramStats: [],
+    keyStats: [],
     fingers: [],
     errorTaxonomy: { substitution: 0, insertion: 0, omission: 0, transposition: 0 },
     topConfusions: [],
@@ -704,6 +720,8 @@ export function buildMetricProfile(analyses: TestAnalysis[], opts: BuildProfileO
     },
     worstBigrams: rankByBadness(mergedBigramStats, topN),
     worstKeys: rankByBadness(mergedKeyStats, topN),
+    bigramStats: rankForDisplay(mergedBigramStats, topN),
+    keyStats: rankForDisplay(mergedKeyStats, topN),
     fingers: mergedFingerStats,
     errorTaxonomy: mergeErrorTaxonomy(analyses),
     topConfusions: topConfusionsFromMatrix(confusionMatrix, topN),

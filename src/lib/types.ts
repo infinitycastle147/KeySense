@@ -255,8 +255,20 @@ export type MetricProfile = {
     accuracy: Measured<number>;
     consistency: Measured<number>;
   };
+  /** Discoveries: ranked, then held to the FDR gate. These drive the report
+   *  and the prescription flow, where a row's presence is treated as a real
+   *  weakness — so a row that cannot be told apart from noise must not appear.
+   *  Usually short, and legitimately empty when nothing clears the gate. */
   worstBigrams: BigramStat[];
   worstKeys: KeyStat[];
+  /** The same ranking with the gate reported rather than applied — every row
+   *  at n >= MIN_FINDING_N, worst first. Display surfaces read these: a
+   *  dashboard's job is to show the ordered field with its uncertainty, not to
+   *  go blank because nothing rose to the level of a discovery
+   *  (src/lib/analysis/ranking.ts, "attached, not applied"). Never feed these
+   *  to the model or to prescription creation. */
+  bigramStats: BigramStat[];
+  keyStats: KeyStat[];
   fingers: FingerStat[];
   errorTaxonomy: ErrorTaxonomy;
   topConfusions: { intended: string; typed: string; count: number }[];

@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { toSnapshotMetrics, snapshotSeries } from "./snapshots";
 import type { MetricProfile } from "@/lib/types";
 
+const OL = {
+  bigram: "ol",
+  n: 340,
+  errors: 29,
+  errorRate: 0.084,
+  errorRateCI: { low: 0.06, high: 0.12 },
+  latencyP50: 211,
+  sameFinger: true,
+};
+
 function profile(over: Partial<MetricProfile> = {}): MetricProfile {
   return {
     windowStart: "2026-07-01T00:00:00Z",
@@ -12,18 +22,13 @@ function profile(over: Partial<MetricProfile> = {}): MetricProfile {
       accuracy: { value: 0.96, n: 40, reportable: true },
       consistency: { value: 78, n: 40, reportable: true },
     },
-    worstBigrams: [
-      {
-        bigram: "ol",
-        n: 340,
-        errors: 29,
-        errorRate: 0.084,
-        errorRateCI: { low: 0.06, high: 0.12 },
-        latencyP50: 211,
-        sameFinger: true,
-      },
-    ],
+    worstBigrams: [OL],
     worstKeys: [],
+    // Display lists are a superset of the discovery lists — snapshots read
+    // these so a learning curve keeps its points on windows where nothing
+    // clears the FDR gate.
+    bigramStats: [OL],
+    keyStats: [],
     fingers: [],
     errorTaxonomy: { substitution: 40, insertion: 5, omission: 3, transposition: 8 },
     topConfusions: [],

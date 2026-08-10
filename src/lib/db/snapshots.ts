@@ -45,7 +45,12 @@ export type SnapshotMetrics = {
 
 export function toSnapshotMetrics(profile: MetricProfile): SnapshotMetrics {
   const bigramErrorRates: SnapshotMetrics["bigramErrorRates"] = {};
-  for (const b of profile.worstBigrams) {
+  // The display list, not the discovery list. A learning curve needs a bigram
+  // sampled on every window, and FDR significance is a property of the window,
+  // not of the bigram: gating on it would drop each target from the snapshot on
+  // exactly the windows where it stopped looking like an outlier — punching
+  // holes in the curve at the moment the drills started working.
+  for (const b of profile.bigramStats) {
     bigramErrorRates[b.bigram] = { errorRate: b.errorRate, n: b.n };
   }
 

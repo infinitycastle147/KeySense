@@ -185,6 +185,64 @@ describe("buildMetricProfile", () => {
     expect(profile.trend).toEqual({ wpmDelta: 0, accuracyDelta: 0, comparedToDays: 0 });
   });
 
+  // The key heatmap painted an empty keyboard while 21 keys sat above n=30,
+  // because it read `worstKeys` — which applies the FDR discovery gate. A
+  // display surface needs the ordered field, not the verdict.
+  it("keeps display lists populated when nothing clears the FDR discovery gate", () => {
+    // Twelve keys, each well past n=30, all at a similar unremarkable error
+    // rate. No row stands out from the population the rows themselves define,
+    // so nothing is a discovery — but every one of them has earned its n.
+    const letters = "abcdefghijkl".split("");
+    const events: KeyEvent[] = [];
+    let t = 0;
+    for (const letter of letters) {
+      for (let i = 0; i < 40; i++) {
+        const isError = i < 2; // 5% everywhere
+        events.push(charEvent({ t, expected: letter, key: isError ? "z" : letter, prev: null }));
+        t += 150;
+      }
+    }
+
+    const profile = buildMetricProfile([computeTestAnalysis(makeTest("flat", events), qwerty)], {
+      topN: 60,
+    });
+
+    expect(profile.worstKeys).toHaveLength(0);
+    expect(profile.keyStats.length).toBe(letters.length);
+    expect(profile.keyStats.every((k) => k.n >= MIN_FINDING_N)).toBe(true);
+  });
+
+  it("display lists stay ordered worst-first and still honour the n gate", () => {
+    // One genuinely bad key among many ordinary ones: it should lead the
+    // display list whether or not it is formally a discovery, and a key with
+    // n < 30 must stay out of both lists.
+    const events: KeyEvent[] = [];
+    let t = 0;
+    for (const letter of "abcdefghijkl".split("")) {
+      for (let i = 0; i < 40; i++) {
+        const isError = letter === "q" ? false : i < 2;
+        events.push(charEvent({ t, expected: letter, key: isError ? "z" : letter, prev: null }));
+        t += 150;
+      }
+    }
+    for (let i = 0; i < 30; i++) {
+      events.push(charEvent({ t, expected: "m", key: i < 15 ? "z" : "m", prev: null }));
+      t += 150;
+    }
+    // n = 5, a 100% error rate that must not reach any list.
+    for (let i = 0; i < 5; i++) {
+      events.push(charEvent({ t, expected: "p", key: "z", prev: null }));
+      t += 150;
+    }
+
+    const profile = buildMetricProfile([computeTestAnalysis(makeTest("mixed", events), qwerty)], {
+      topN: 60,
+    });
+
+    expect(profile.keyStats[0]?.key).toBe("m");
+    expect(profile.keyStats.some((k) => k.key === "p")).toBe(false);
+  });
+
   it("merges fatigue buckets across tests of different lengths without NaN", () => {
     const short = computeTestAnalysis(makeTest("short", repeatingEvents(5, "a", "a"), { durationMs: 5000 }), qwerty, 10);
     const long = computeTestAnalysis(makeTest("long", repeatingEvents(30, "a", "a"), { durationMs: 25000 }), qwerty, 10);

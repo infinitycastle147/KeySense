@@ -140,7 +140,7 @@ export function DashboardClient() {
         })
       : [];
 
-    const worstBigram = profile.worstBigrams[0];
+    const worstBigram = profile.bigramStats[0];
     const bigramSeries = worstBigram
       ? analyses.map((a) => {
           const bs = a.bigramStats.find((b) => b.bigram === worstBigram.bigram);
@@ -312,7 +312,7 @@ export function DashboardClient() {
         <h2 className="label-type text-muted-foreground">per-key latency &amp; error rate</h2>
         {canonicalLayoutJson ? (
           <div className="w-full overflow-x-auto rounded-md bg-chassis p-4 ring-1 ring-grid">
-            <KeyHeatmap keyStats={profile.worstKeys} layout={canonicalLayoutJson} />
+            <KeyHeatmap keyStats={profile.keyStats} layout={canonicalLayoutJson} />
           </div>
         ) : (
           <p className="label-type text-muted-foreground">layout data unavailable</p>
@@ -322,7 +322,7 @@ export function DashboardClient() {
       <section aria-label="Worst transitions" className="flex flex-col gap-3">
         <h2 className="label-type text-muted-foreground">worst transitions</h2>
         <div className="rounded-md bg-chassis p-4 ring-1 ring-grid">
-          <BigramTable bigrams={profile.worstBigrams} />
+          <BigramTable bigrams={profile.bigramStats} />
         </div>
       </section>
     </div>

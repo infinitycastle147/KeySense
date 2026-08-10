@@ -48,6 +48,10 @@ function profile(over: Partial<MetricProfile> = {}): MetricProfile {
         latencyP90: 320,
       },
     ],
+    // Not read by buildCompactProfile — the model only ever sees discoveries.
+    // Present so the fixture is a valid MetricProfile.
+    bigramStats: [],
+    keyStats: [],
     fingers: [
       { finger: "r-pinky", n: 340, errorRate: 0.084, latencyP50: 211, relativeLatency: 2.13 },
     ],
