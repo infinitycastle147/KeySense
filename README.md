@@ -46,7 +46,7 @@ npm run dev
 ## Stack
 
 Next.js 16 · React 19 · TypeScript · Tailwind v4 · shadcn/ui v4 (Base UI) · Supabase ·
-OpenRouter
+Gemini
 
 ## Status
 
@@ -54,9 +54,13 @@ All five phases in `docs/ARCHITECTURE.md` §9 are implemented: typing engine and
 capture, offline sync and auth, the statistics engine and dashboard, the diagnosis
 pipeline, and prescriptions with outcome tracking.
 
-The model call itself is **written but never executed** — there is no `OPENROUTER_API_KEY`
-yet. Without one the app is fully functional and reports return a fixture, clearly badged
-in the UI. `grep -rn "TODO(ai-key)"` lists what to verify when a key is added.
+The model call runs against Gemini and has been verified live: structured output parses
+and the hallucination guard passes on genuine output. Without a `GEMINI_API_KEY` the app
+is still fully functional — reports return a fixture, clearly badged in the UI.
+
+Two models, set by `GEMINI_MODEL` and `GEMINI_DRILL_MODEL`. Diagnosis runs on a stable
+model because its output is schema-constrained, guarded, and persisted for audit; drill
+sentences are free prose behind deterministic synthesis, so a preview model is fine there.
 
 ## Licence
 

@@ -17,7 +17,7 @@ surfaces, or scale infrastructure.
 ## Stack
 
 Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · shadcn/ui v4 · Supabase
-(Postgres) · IndexedDB · OpenRouter.
+(Postgres) · IndexedDB · Gemini.
 
 Two things that differ from what you likely remember:
 

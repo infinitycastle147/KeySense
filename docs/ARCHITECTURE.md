@@ -355,7 +355,7 @@ See `src/lib/prescriptions/control.ts` for selection and
 | UI | **shadcn/ui v4 + Tailwind v4** | Owned components, no black-box library. Note: v4 uses **Base UI**, not Radix. |
 | DB / Auth | **Supabase (Postgres)** | Aggregation here is inherently relational (group by bigram, window over last N tests). Postgres does this natively; Firestore would fight it. JSONB holds raw events. Auth handles multi-device sessions. |
 | Local store | **IndexedDB** | Offline write-ahead queue (§3.3). |
-| AI | **OpenRouter**, server-side only | One API across vendors, so the model is a config value rather than a code dependency. Never expose the key to the browser. |
+| AI | **Gemini**, called directly, server-side only | Single-user project with a single key — the vendor-routing indirection cost more than it bought. The model id stays a config value (`GEMINI_MODEL`); the vendor is now a code dependency, confined to `src/lib/ai/client.ts` and `src/lib/drills/llm.ts`. Never expose the key to the browser. |
 
 **The API key never reaches the client.** All model calls go through Next.js route
 handlers.

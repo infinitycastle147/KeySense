@@ -6,14 +6,24 @@
  */
 
 /**
- * The model used for diagnosis, as an OpenRouter model id (`vendor/model`).
+ * The model used for diagnosis, as a Gemini model id.
  *
- * Overridable without a code change so the model can be swapped by editing
- * .env.local — the routing layer is the whole point of using OpenRouter.
- * Whatever you pick must support `response_format: json_schema`; see the
- * `requireParameters` note in client.ts for what happens if it doesn't.
+ * Overridable via GEMINI_MODEL so the model can be swapped by editing
+ * .env.local rather than by a code change. Whatever you pick must support
+ * structured output (`responseJsonSchema`) — see client.ts.
  */
-export const REPORT_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-5";
+export const REPORT_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.6-flash";
+
+/**
+ * The model used for drill sentences (src/lib/drills/llm.ts).
+ *
+ * Separate from REPORT_MODEL because the two calls are not alike: this one
+ * returns free prose, is a secondary mechanism behind deterministic synthesis,
+ * and has nothing persisted or audited — so a preview model is a reasonable
+ * trade here in a way it is not for the diagnosis path, whose output is
+ * schema-constrained, guarded against fabricated figures, and kept for audit.
+ */
+export const DRILL_MODEL = process.env.GEMINI_DRILL_MODEL ?? "gemini-3-flash-preview";
 
 /**
  * Bump on ANY change to prompt text, schema, or profile shape. Persisted on

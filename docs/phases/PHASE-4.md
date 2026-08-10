@@ -7,7 +7,7 @@ provider stubbed behind a flag.
 
 > ## The key constraint for this phase
 >
-> **There is no `OPENROUTER_API_KEY` yet.** Build everything around the call so that adding
+> **There is no `GEMINI_API_KEY` yet.** Build everything around the call so that adding
 > the key later is a one-line change and nothing else.
 >
 > - Everything except the network call must be **pure and unit tested**: profile
@@ -52,13 +52,13 @@ Use structured tool-use / JSON output matching `Finding[]` from `types.ts`.
 
 ```ts
 export function isLiveAIEnabled(): boolean {
-  return Boolean(process.env.OPENROUTER_API_KEY);
+  return Boolean(process.env.GEMINI_API_KEY);
 }
 ```
 
 - `import "server-only"` at the top — the key must never reach the browser.
-- Model: an OpenRouter `vendor/model` id in one exported constant, overridable via `OPENROUTER_MODEL`. Set `provider.requireParameters` so a provider that ignores `json_schema` is skipped rather than silently returning prose.
-- `@openrouter/sdk` is installed. The model is an OpenRouter `vendor/model` id, configurable via `OPENROUTER_MODEL`.
+- Model: a Gemini model id in one exported constant, overridable via `GEMINI_MODEL`. Pass the schema as `responseJsonSchema` alongside `responseMimeType: "application/json"` — a schema sent without that mime type is silently ignored and the model returns prose.
+- `@google/genai` is installed. The model is a Gemini model id, configurable via `GEMINI_MODEL`.
 - `TODO(ai-key):` on the live branch, noting: set key in `.env.local`, verify a real call,
   check token usage, then remove the fixture fallback default.
 
@@ -101,6 +101,6 @@ Drill generation and prescriptions (Phase 5). Do not modify `src/lib/analysis/`.
 - [ ] Everything but the network call is unit tested
 - [ ] Test proves raw events never enter the payload
 - [ ] Validator rejects hallucinated numbers — with a test
-- [ ] App works fully with no `OPENROUTER_API_KEY`, returning flagged fixtures
+- [ ] App works fully with no `GEMINI_API_KEY`, returning flagged fixtures
 - [ ] `grep -rn "TODO(ai-key)"` returns a complete activation checklist
 - [ ] `npm run typecheck && npm run lint && npm test && npm run build` all clean
