@@ -99,6 +99,12 @@ function toEventsRow(test: CompletedTest, userId: string) {
     user_id: userId,
     schema_ver: EVENT_SCHEMA_VERSION,
     events: test.events,
+    // Part of the archive, not metadata: without the prompt the event log
+    // cannot be replayed (migration 0005, src/lib/types.ts).
+    words: test.words ?? null,
+    // Separate column, not merged into `events` — see migration 0006 for why
+    // interleaving would corrupt every latency metric.
+    keyups: test.keyups ?? null,
     event_count: test.events.length,
   };
 }
@@ -112,7 +118,9 @@ function toKeyStatsRows(test: CompletedTest, userId: string) {
     errors: stat.errors,
     latency_p50: Math.round(stat.latencyP50),
     latency_p90: Math.round(stat.latencyP90),
-    analysis_version: 1,
+    // The distribution, so cross-session pooling is exact (migration 0007).
+    latency_hist: stat.latencyHist ?? null,
+    analysis_version: 2,
   }));
 }
 
@@ -125,8 +133,9 @@ async function toBigramStatsRows(test: CompletedTest, userId: string) {
     n: stat.n,
     errors: stat.errors,
     latency_p50: Math.round(stat.latencyP50),
+    latency_hist: stat.latencyHist ?? null,
     same_finger: stat.sameFinger,
-    analysis_version: 1,
+    analysis_version: 2,
   }));
 }
 

@@ -57,6 +57,15 @@ function profile(over: Partial<MetricProfile> = {}): MetricProfile {
     fatigue: { bucketSeconds: 10, wpm: [88, 86, 84, 80] },
     corrections: { backspaceRate: 0.06, meanCharsToNotice: measured(1.8, 55) },
     trend: { wpmDelta: 4.2, accuracyDelta: -0.3, comparedToDays: 30 },
+    rhythm: { medianIki: 180, coefficientOfVariation: 0.32, burstRate: 0.02, stallRate: 0.03, n: 900 },
+    dynamics: { available: true, dwellP50: 78, flightP50: 96, overlapRate: 0.41, n: 900 },
+    quality: { discardRate: 0.04, distractedTests: 1, testCount: 42 },
+    charClasses: [],
+    shift: { shiftedErrorRate: 0, unshiftedErrorRate: 0, n: 0 },
+    geometry: { shapes: [], alternationRate: 0, medianSameHandRun: 0, redirectRate: 0, n: 0 },
+    classifiedConfusions: [],
+    timeLoss: { floorMs: 140, baselineWpm: 84, top: [] },
+    configMatched: true,
     ...over,
   };
 }

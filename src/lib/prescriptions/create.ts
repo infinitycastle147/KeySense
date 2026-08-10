@@ -7,7 +7,12 @@
  * `evaluate.ts` only ever produces a separate `outcome` + `verdict`.
  */
 
-import type { Prescription, PrescriptionTargetType, DrillConfig } from "@/lib/types";
+import type {
+  Prescription,
+  PrescriptionControl,
+  PrescriptionTargetType,
+  DrillConfig,
+} from "@/lib/types";
 import type { TargetStat } from "./baseline";
 import { resolveCorpus } from "@/lib/drills/targets";
 import { DEFAULT_TARGET_RATIO } from "@/lib/drills/generate";
@@ -31,6 +36,11 @@ export type CreatePrescriptionInput = {
    *  / extractFromAnalyses in ./baseline.ts. Anything else throws rather than
    *  silently prescribing against noise. */
   baseline: TargetStat;
+  /** Hold-out control targets and their baseline, both captured now (see
+   *  ./control.ts). Omit when no control could be formed. Unlike the treated
+   *  baseline, a non-reportable control baseline does not throw — it is
+   *  dropped, and the prescription proceeds uncontrolled. */
+  control?: { targets: string[]; baseline: TargetStat };
   drillsTarget?: number;
   wordCount?: number;
   /** Testability hooks. Production callers omit both. */
@@ -50,6 +60,34 @@ function buildDrillConfig(
     // be forgotten, overridden, or exposed as a UI toggle.
     targetRatio: DEFAULT_TARGET_RATIO,
     corpus: resolveCorpus(targetType, targets),
+  };
+}
+
+/**
+ * Freezes the hold-out control, or drops it.
+ *
+ * A control is dropped rather than fatal in three cases: no targets could be
+ * selected (see control.ts), or its baseline is below MIN_FINDING_N — in which
+ * case the *outcome* side could not be measured honestly either, so keeping it
+ * would only manufacture a comparison that evaluate() would have to discard
+ * later anyway. An uncontrolled prescription is worth having; a control made
+ * of noise is not, because it would silently distort the very correction it
+ * exists to provide.
+ */
+function buildControl(
+  control: CreatePrescriptionInput["control"],
+): PrescriptionControl | null {
+  if (!control || control.targets.length === 0) return null;
+  if (!control.baseline.reportable) return null;
+
+  return {
+    targets: [...control.targets],
+    baseline: Object.freeze({
+      errorRate: control.baseline.errorRate,
+      latencyP50: control.baseline.latencyP50,
+      n: control.baseline.n,
+    }),
+    outcome: null,
   };
 }
 
@@ -88,6 +126,7 @@ export function createPrescription(input: CreatePrescriptionInput): Prescription
     ),
     baseline,
     outcome: null,
+    control: buildControl(input.control),
     verdict: null,
     status: "active",
     drillsTarget: input.drillsTarget ?? DEFAULT_DRILLS_TARGET,

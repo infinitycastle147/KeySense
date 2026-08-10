@@ -9,6 +9,8 @@ import {
   wilsonInterval,
   filterOutliers,
   coefficientOfVariation,
+  bootstrapMedianCI,
+  intervalsSeparated,
 } from "./stats";
 
 describe("constants", () => {
@@ -193,5 +195,59 @@ describe("filterOutliers", () => {
   it("supports a custom accessor for richer records", () => {
     const records = [{ interval: 50, key: "a" }, { interval: 2000, key: "b" }];
     expect(filterOutliers(records, (r) => r.interval)).toEqual([{ interval: 50, key: "a" }]);
+  });
+});
+
+describe("bootstrapMedianCI", () => {
+  const sample = Array.from({ length: 200 }, (_, i) => 100 + (i % 40));
+
+  it("is deterministic — identical input yields an identical interval", () => {
+    // Recomputability (docs/ARCHITECTURE.md §2) requires this: a Math.random()
+    // bootstrap would make every re-run disagree with the stored value, and
+    // that drift would be indistinguishable from a real algorithm change.
+    expect(bootstrapMedianCI(sample)).toEqual(bootstrapMedianCI(sample));
+  });
+
+  it("brackets the point estimate", () => {
+    const ci = bootstrapMedianCI(sample);
+    const point = median(sample);
+    expect(ci.low).toBeLessThanOrEqual(point);
+    expect(ci.high).toBeGreaterThanOrEqual(point);
+  });
+
+  it("narrows as the sample grows", () => {
+    const spread = (n: number) => {
+      const values = Array.from({ length: n }, (_, i) => 100 + ((i * 37) % 60));
+      const ci = bootstrapMedianCI(values);
+      return ci.high - ci.low;
+    };
+    expect(spread(400)).toBeLessThan(spread(20));
+  });
+
+  it("claims no width rather than a fake one below MIN_BOOTSTRAP_N", () => {
+    const ci = bootstrapMedianCI([100, 200, 300]);
+    expect(ci.low).toBe(ci.high);
+    expect(ci.low).toBe(200);
+  });
+
+  it("returns a zero interval for an empty sample", () => {
+    expect(bootstrapMedianCI([])).toEqual({ low: 0, high: 0 });
+  });
+
+  it("collapses to a point when every observation is identical", () => {
+    const ci = bootstrapMedianCI(new Array(50).fill(180));
+    expect(ci).toEqual({ low: 180, high: 180 });
+  });
+});
+
+describe("intervalsSeparated", () => {
+  it("is true only when the intervals do not overlap", () => {
+    expect(intervalsSeparated({ low: 1, high: 2 }, { low: 3, high: 4 })).toBe(true);
+    expect(intervalsSeparated({ low: 3, high: 4 }, { low: 1, high: 2 })).toBe(true);
+    expect(intervalsSeparated({ low: 1, high: 3 }, { low: 2, high: 4 })).toBe(false);
+  });
+
+  it("treats touching intervals as overlapping — the conservative direction", () => {
+    expect(intervalsSeparated({ low: 1, high: 2 }, { low: 2, high: 3 })).toBe(false);
   });
 });

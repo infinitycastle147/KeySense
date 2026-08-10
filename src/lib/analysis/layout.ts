@@ -39,6 +39,10 @@ export type LayoutIndex = {
   keyToFinger(key: string): Finger | undefined;
   /** Canonical key id -> row label ("row1".."row5"). */
   keyToRow(key: string): string | undefined;
+  /** Canonical key id -> its physical (row index, column) position. Row index
+   *  is 0-based from the number row, so row distance is a plain subtraction —
+   *  which is what scissor and stretch detection need. */
+  keyToPosition(key: string): { rowIndex: number; col: number } | undefined;
   /** Physically adjacent keys (row distance <= 1 and column distance <= 1).
    *  A key is never "adjacent" to itself. */
   areAdjacent(keyA: string, keyB: string): boolean;
@@ -137,6 +141,12 @@ export function parseLayout(json: LayoutJson): LayoutIndex {
     return keyToRowMap.get(key);
   }
 
+  function keyToPosition(key: string): { rowIndex: number; col: number } | undefined {
+    const pos = keyToPositionMap.get(key);
+    if (!pos) return undefined;
+    return { rowIndex: ROW_ORDER.indexOf(pos.row), col: pos.col };
+  }
+
   function areAdjacent(keyA: string, keyB: string): boolean {
     if (keyA === keyB) return false;
     const a = keyToPositionMap.get(keyA);
@@ -155,5 +165,5 @@ export function parseLayout(json: LayoutJson): LayoutIndex {
     return a === b;
   }
 
-  return { charToKey, keyToFinger, keyToRow, areAdjacent, isSameFinger };
+  return { charToKey, keyToFinger, keyToRow, keyToPosition, areAdjacent, isSameFinger };
 }

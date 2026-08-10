@@ -388,3 +388,59 @@ describe("engine — isDone / finish", () => {
     expect(test.result.charsCorrect).toBe(3);
   });
 });
+
+describe("key releases (schema version 2)", () => {
+  it("records a release with a t on the same clock base as the press", () => {
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyDown(key("a", { timeStamp: 1000 }));
+    engine.handleKeyUp(key("a", { timeStamp: 1090 }));
+
+    expect(engine.getKeyups()).toEqual([{ t: 90, key: "a" }]);
+    expect(engine.getEvents()[0].t).toBe(0);
+  });
+
+  it("never touches typing state", () => {
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyDown(key("a", { timeStamp: 1000 }));
+    const before = engine.getState();
+    engine.handleKeyUp(key("a", { timeStamp: 1090 }));
+
+    expect(engine.getState()).toEqual(before);
+    expect(engine.getEvents()).toHaveLength(1);
+  });
+
+  it("does not notify subscribers — a release renders nothing", () => {
+    // Waking React on keyup would put a render on the input path and spend the
+    // 16ms budget on something invisible.
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyDown(key("a", { timeStamp: 1000 }));
+    let notified = 0;
+    engine.subscribe(() => notified++);
+    engine.handleKeyUp(key("a", { timeStamp: 1090 }));
+
+    expect(notified).toBe(0);
+  });
+
+  it("ignores a release arriving before the test has started", () => {
+    // There is no startTs to be relative to, so any t would be fabricated.
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyUp(key("a", { timeStamp: 500 }));
+    expect(engine.getKeyups()).toEqual([]);
+  });
+
+  it("ignores a release arriving after the test has finished", () => {
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyDown(key("a", { timeStamp: 1000 }));
+    engine.finish(1500);
+    engine.handleKeyUp(key("a", { timeStamp: 1600 }));
+    expect(engine.getKeyups()).toEqual([]);
+  });
+
+  it("carries releases into the completed test", () => {
+    const engine = createEngine(config, ["ab"]);
+    engine.handleKeyDown(key("a", { timeStamp: 1000 }));
+    engine.handleKeyUp(key("a", { timeStamp: 1080 }));
+    const test = engine.finish(1200);
+    expect(test.keyups).toEqual([{ t: 80, key: "a" }]);
+  });
+});

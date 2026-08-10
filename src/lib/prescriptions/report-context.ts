@@ -7,6 +7,7 @@
  */
 
 import type { Prescription, PrescriptionTargetType, PrescriptionVerdict } from "@/lib/types";
+import { improvementScore } from "./evaluate";
 
 export type CompletedPrescriptionSummary = {
   targetType: PrescriptionTargetType;
@@ -16,6 +17,13 @@ export type CompletedPrescriptionSummary = {
   outcomeErrorRate: number;
   drillsCompleted: number;
   completedAt: string;
+  /** Whether the verdict came from a controlled comparison (see
+   *  ./evaluate.ts). Sent to the model because an uncontrolled verdict is a
+   *  weaker claim, and the report must not narrate the two identically. */
+  controlled: boolean;
+  /** Difference-in-differences behind a controlled verdict; null otherwise.
+   *  Pre-computed here — the model is never asked to derive it. */
+  lift: number | null;
 };
 
 export type ActivePrescriptionSummary = {
@@ -49,6 +57,9 @@ export function buildPrescriptionReportContext(prescriptions: Prescription[]): P
     .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
 
   const mostRecent = completed[0];
+  const control = mostRecent?.control;
+  const controlled = Boolean(control?.outcome);
+
   const lastCompleted: CompletedPrescriptionSummary | null = mostRecent
     ? {
         targetType: mostRecent.targetType,
@@ -58,6 +69,12 @@ export function buildPrescriptionReportContext(prescriptions: Prescription[]): P
         outcomeErrorRate: mostRecent.outcome.errorRate,
         drillsCompleted: mostRecent.drillsDone,
         completedAt: mostRecent.completedAt,
+        controlled,
+        lift:
+          control?.outcome
+            ? improvementScore(mostRecent.baseline, mostRecent.outcome) -
+              improvementScore(control.baseline, control.outcome)
+            : null,
       }
     : null;
 

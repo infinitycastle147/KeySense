@@ -143,3 +143,104 @@ export function filterOutliers<T = number>(
     return Number.isFinite(value) && value >= 0 && value <= maxMs;
   });
 }
+
+// ---------------------------------------------------------------------------
+// Uncertainty on latency
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic PRNG (mulberry32).
+ *
+ * The bootstrap needs randomness; the analysis layer needs reproducibility.
+ * docs/ARCHITECTURE.md §2 rests on being able to re-run analysis over archived
+ * events and get the same answer — a `Math.random()` bootstrap would make
+ * every recomputation disagree slightly with the stored one, and there would
+ * be no way to tell that drift apart from a real algorithm change.
+ *
+ * Seeded from the data itself (below), so identical input always yields an
+ * identical interval without any seed having to be threaded through callers.
+ */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Order-sensitive hash of the sample, used as the bootstrap seed. */
+function seedFrom(values: number[]): number {
+  let h = 2166136261;
+  for (const v of values) {
+    h ^= Math.round(v * 1000);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Resamples below this are not worth reporting — the interval would be wider
+ *  than the measurement is useful. Callers gate on `n` anyway; this is the
+ *  floor at which the bootstrap itself stops being meaningful. */
+export const MIN_BOOTSTRAP_N = 8;
+
+export const BOOTSTRAP_RESAMPLES = 500;
+
+/**
+ * Percentile bootstrap confidence interval for a median.
+ *
+ * Every error rate in this codebase carries a Wilson interval, and until now
+ * every median latency carried nothing — so `relativeLatency: 2.1` and
+ * `relativeLatency: 1.15` looked equally solid to the ranker and to the model,
+ * despite one possibly resting on 9 samples and the other on 900. That
+ * asymmetry meant the careful path guarded error rates while the loose path
+ * drove the latency findings.
+ *
+ * A bootstrap rather than a closed form because the sampling distribution of a
+ * median has no usable analytic expression for the small, skewed, discrete
+ * samples typing produces.
+ *
+ * Returns a zero-width interval at the point estimate when there is too little
+ * data to resample — honest in the sense that no width is claimed, and callers
+ * must still gate on `n`.
+ */
+export function bootstrapMedianCI(
+  values: number[],
+  confidence = 0.95,
+  resamples = BOOTSTRAP_RESAMPLES,
+): Interval {
+  if (values.length === 0) return { low: 0, high: 0 };
+  const point = median(values);
+  if (values.length < MIN_BOOTSTRAP_N) return { low: point, high: point };
+
+  const rand = mulberry32(seedFrom(values));
+  const medians: number[] = [];
+  const sample = new Array<number>(values.length);
+
+  for (let r = 0; r < resamples; r++) {
+    for (let i = 0; i < values.length; i++) {
+      sample[i] = values[Math.floor(rand() * values.length)];
+    }
+    medians.push(median(sample));
+  }
+
+  const tail = (1 - confidence) / 2;
+  return {
+    low: percentile(medians, tail * 100),
+    high: percentile(medians, (1 - tail) * 100),
+  };
+}
+
+/**
+ * True when two medians are far enough apart that their bootstrap intervals
+ * don't overlap — a conservative, non-parametric "this difference is real".
+ *
+ * Deliberately conservative: non-overlapping intervals imply significance at
+ * roughly the stated level, but overlapping ones do not imply the opposite.
+ * For gating a *finding*, erring toward silence is the correct direction.
+ */
+export function intervalsSeparated(a: Interval, b: Interval): boolean {
+  return a.high < b.low || b.high < a.low;
+}

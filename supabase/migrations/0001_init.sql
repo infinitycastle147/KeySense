@@ -183,6 +183,12 @@ begin
     'tests','test_events','key_stats','bigram_stats',
     'snapshots','reports','prescriptions'
   ] loop
+    -- Dropped first so `db.sh migrate` — which re-applies every file in order,
+    -- every time — stays idempotent. Postgres has no
+    -- `create policy if not exists`, and without this the whole migration run
+    -- aborts on the second invocation, which in practice means later
+    -- migrations silently never get applied.
+    execute format('drop policy if exists %I on public.%I', t || '_owner', t);
     execute format(
       'create policy %I on public.%I for all to authenticated
          using (user_id = (select auth.uid()))

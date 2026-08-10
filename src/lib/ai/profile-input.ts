@@ -39,12 +39,47 @@ export type CompactProfile = {
   fingers: {
     finger: string;
     relativeLatency: number;
+    /** Confound-corrected ratio (src/lib/analysis/residual.ts). Absent when the
+     *  window had too few transitions to fit the model. A finding about a
+     *  finger should be written from this, not from `relativeLatency`, which
+     *  cannot separate a slow finger from an expensive approach to it. */
+    relativeAdjusted?: number;
     errorRate: number;
     n: number;
   }[];
   errorTaxonomy: { class: string; count: number }[];
   topConfusions: { intended: string; typed: string; count: number }[];
   corrections: { backspaceRate: number; meanCharsToNotice: number | null; n: number };
+  /** Steadiness, a separate axis from speed. */
+  rhythm: { medianIki: number; coefficientOfVariation: number; burstRate: number; stallRate: number; n: number } | null;
+  /** Dwell / flight / overlap. Null when the window predates key-release
+   *  capture — omitted entirely rather than sent as zeros, which the model
+   *  would read as "this typist holds keys for no time at all". */
+  dynamics: { dwellP50: number; flightP50: number; overlapRate: number; n: number } | null;
+  /** How much of the window was actually typing. Sent so the model can temper
+   *  a finding drawn from distracted sessions instead of citing its n as
+   *  though every observation were equally good. */
+  quality: { discardRate: number; distractedTests: number; testCount: number };
+  /** Per-character-class performance. Capitals, digits and punctuation fail in
+   *  ways lowercase cannot, and pooling them hides it. */
+  charClasses: { charClass: string; n: number; errorRate: number; relativeToLowercase: number }[];
+  shift: { shiftedErrorRate: number; unshiftedErrorRate: number; n: number } | null;
+  /** Bigram shapes and hand flow. */
+  geometry: {
+    shapes: { shape: string; n: number; errorRate: number; latencyP50: number }[];
+    alternationRate: number;
+    medianSameHandRun: number;
+    redirectRate: number;
+    n: number;
+  } | null;
+  /** Confusions carrying their likely root cause, which determines the drill. */
+  classifiedConfusions: { intended: string; typed: string; count: number; cause: string }[];
+  /** WPM cost per weakness. This, not error rate, is what makes one target
+   *  worth more practice time than another. */
+  timeLoss: { floorMs: number; baselineWpm: number; top: { bigram: string; n: number; excessMs: number; wpmCost: number }[] };
+  /** False when the window mixed test configurations, in which case `trend`
+   *  conflates a change in skill with a change in what was typed. */
+  configMatched: boolean;
   trend: { wpmDelta: number; accuracyDelta: number; comparedToDays: number };
 };
 
@@ -97,6 +132,7 @@ export function buildCompactProfile(
     fingers: reportable<FingerStat>(profile.fingers, minN).map((f) => ({
       finger: f.finger,
       relativeLatency: f.relativeLatency,
+      ...(f.relativeAdjusted !== undefined ? { relativeAdjusted: f.relativeAdjusted } : {}),
       errorRate: f.errorRate,
       n: f.n,
     })),
@@ -111,6 +147,23 @@ export function buildCompactProfile(
         : null,
       n: profile.corrections.meanCharsToNotice.n,
     },
+    rhythm: profile.rhythm.n >= minN ? profile.rhythm : null,
+    dynamics:
+      profile.dynamics.available && profile.dynamics.n >= minN
+        ? {
+            dwellP50: profile.dynamics.dwellP50,
+            flightP50: profile.dynamics.flightP50,
+            overlapRate: profile.dynamics.overlapRate,
+            n: profile.dynamics.n,
+          }
+        : null,
+    quality: profile.quality,
+    charClasses: profile.charClasses.filter((c) => c.n >= minN),
+    shift: profile.shift.n >= minN ? profile.shift : null,
+    geometry: profile.geometry.n >= minN ? profile.geometry : null,
+    classifiedConfusions: profile.classifiedConfusions.slice(0, TOP_CONFUSIONS),
+    timeLoss: profile.timeLoss,
+    configMatched: profile.configMatched,
     trend: profile.trend,
   };
 }

@@ -19,6 +19,7 @@ import type {
   CompletedTest,
   KeyEvent,
   KeyEventKind,
+  KeyUpEvent,
   TestConfig,
   TestSource,
 } from "@/lib/types";
@@ -46,6 +47,8 @@ export type EngineOptions = {
 
 export type EngineHandle = {
   handleKeyDown: (e: KeyboardEvent) => void;
+  /** Records a key release. Never touches typing state — see `handleKeyUp`. */
+  handleKeyUp: (e: KeyboardEvent) => void;
   handleCompositionStart: () => void;
   handleCompositionEnd: () => void;
   /** Full snapshot — cheap, but prefer the per-field selectors below inside
@@ -53,6 +56,7 @@ export type EngineHandle = {
    *  don't cascade (see src/components/test). */
   getState: () => EngineState;
   getEvents: () => KeyEvent[];
+  getKeyups: () => KeyUpEvent[];
   getWords: () => string[];
   getStatus: () => EngineStatus;
   getWordIdx: () => number;
@@ -81,6 +85,7 @@ export function createEngine(
   opts: EngineOptions = {}
 ): EngineHandle {
   const events: KeyEvent[] = [];
+  const keyups: KeyUpEvent[] = [];
   const typed: string[] = words.map(() => "");
   let wordIdx = 0;
   let status: EngineStatus = "waiting";
@@ -239,6 +244,23 @@ export function createEngine(
     if (changed) notify();
   }
 
+  /**
+   * Records a key release.
+   *
+   * Deliberately does nothing else. It never mutates typing state, never
+   * starts the test, and never calls `notify()` — a release changes nothing
+   * the user can see, so waking React for it would put a render on the input
+   * path and spend the 16ms budget (CLAUDE.md invariant 3) on nothing.
+   *
+   * Releases are only recorded while the test is running. A release arriving
+   * before the first keydown has no `startTs` to be relative to, and one
+   * arriving after `finish()` belongs to no test.
+   */
+  function handleKeyUp(e: KeyboardEvent): void {
+    if (status !== "running" || startTs === null) return;
+    keyups.push({ t: e.timeStamp - startTs, key: e.key });
+  }
+
   function handleCompositionStart() {
     composing = true;
   }
@@ -283,6 +305,10 @@ export function createEngine(
       config,
       result,
       events: events.slice(),
+      keyups: keyups.slice(),
+      // Archived alongside the events: the log is only replayable if what the
+      // user was asked to type is preserved with it (see types.ts).
+      words: words.slice(),
       source: opts.source ?? "freeplay",
       prescriptionId: opts.prescriptionId ?? null,
       deviceId: opts.deviceId ?? "unknown",
@@ -296,10 +322,12 @@ export function createEngine(
 
   return {
     handleKeyDown,
+    handleKeyUp,
     handleCompositionStart,
     handleCompositionEnd,
     getState,
     getEvents,
+    getKeyups: () => keyups.slice(),
     getWords: () => words,
     getStatus: () => status,
     getWordIdx: () => wordIdx,

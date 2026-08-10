@@ -15,11 +15,12 @@ import { computeTestAnalysis, buildMetricProfile } from "@/lib/analysis/profile"
 import { parseLayout, type LayoutJson } from "@/lib/analysis/layout";
 import { MIN_FINDING_N } from "@/lib/analysis/stats";
 import { buildCompactProfile } from "@/lib/ai/profile-input";
+import { writeSnapshot } from "@/lib/db/snapshots";
 import { generateReport, HallucinationError } from "@/lib/ai/client";
 import { MIN_TESTS_FOR_REPORT } from "@/lib/ai/model";
 import { buildPrescriptionReportContext } from "@/lib/prescriptions/report-context";
 import { rowToPrescription } from "@/lib/prescriptions/store";
-import type { CompletedTest, KeyEvent } from "@/lib/types";
+import type { CompletedTest, KeyEvent, KeyUpEvent } from "@/lib/types";
 
 const WINDOW_SIZE = 50;
 
@@ -69,7 +70,7 @@ export async function POST() {
 
   const { data: eventRows, error: eventsError } = await supabase
     .from("test_events")
-    .select("test_id, events")
+    .select("test_id, events, words, keyups")
     .in(
       "test_id",
       tests.map((t) => t.id),
@@ -79,14 +80,26 @@ export async function POST() {
     return NextResponse.json({ error: eventsError.message }, { status: 500 });
   }
 
-  const eventsByTest = new Map<string, KeyEvent[]>(
-    (eventRows ?? []).map((r) => [r.test_id as string, r.events as KeyEvent[]]),
+  const archiveByTest = new Map<
+    string,
+    { events: KeyEvent[]; words: string[] | null; keyups: KeyUpEvent[] | null }
+  >(
+    (eventRows ?? []).map((r) => [
+      r.test_id as string,
+      {
+        events: r.events as KeyEvent[],
+        words: (r.words as string[] | null) ?? null,
+        keyups: (r.keyups as KeyUpEvent[] | null) ?? null,
+      },
+    ]),
   );
 
   const analyses = [];
+  const fingerprints: string[] = [];
+  let lastLayout: ReturnType<typeof parseLayout> | undefined;
   for (const row of tests) {
-    const events = eventsByTest.get(row.id as string);
-    if (!events) continue; // events not yet synced — skip rather than guess
+    const archive = archiveByTest.get(row.id as string);
+    if (!archive) continue; // events not yet synced — skip rather than guess
 
     const test: CompletedTest = {
       id: row.id as string,
@@ -111,7 +124,9 @@ export async function POST() {
         charsExtra: row.chars_extra as number,
         charsMissed: row.chars_missed as number,
       },
-      events,
+      events: archive.events,
+      words: archive.words ?? undefined,
+      keyups: archive.keyups ?? undefined,
       source: row.source,
       prescriptionId: (row.prescription_id as string | null) ?? null,
       deviceId: (row.device_id as string | null) ?? "",
@@ -121,6 +136,19 @@ export async function POST() {
 
     const layout = parseLayout(await loadLayout(test.config.layout));
     analyses.push(computeTestAnalysis(test, layout));
+    // A punctuation run and a plain-words run are different tasks. Recorded
+    // per test so buildMetricProfile can say whether the trend compares like
+    // with like (migration 0003 made these queryable for exactly this).
+    fingerprints.push(
+      [
+        test.config.mode,
+        test.config.language,
+        test.config.layout,
+        test.config.punctuation ? "punct" : "plain",
+        test.config.numbers ? "num" : "nonum",
+      ].join("|"),
+    );
+    lastLayout = layout;
   }
 
   if (analyses.length === 0) {
@@ -130,8 +158,22 @@ export async function POST() {
     );
   }
 
-  const profile = buildMetricProfile(analyses);
+  const profile = buildMetricProfile(analyses, {
+    configFingerprints: fingerprints,
+    layout: lastLayout,
+  });
   const compact = buildCompactProfile(profile, MIN_FINDING_N);
+
+  // Longitudinal tracking (docs/ARCHITECTURE.md §10: "I am measurably better
+  // than I was a month ago"). Report generation is the natural cadence — it is
+  // already the point at which a full window has been analysed.
+  //
+  // A snapshot is derived, not archival: it is recomputable from test_events at
+  // any time, so a failure to write one must never cost the user their report.
+  const { error: snapshotError } = await writeSnapshot(supabase, user.id, profile);
+  if (snapshotError) {
+    console.warn("snapshot write failed, continuing:", snapshotError);
+  }
 
   // Phase 5 closed loop (docs/ARCHITECTURE.md §7): the report opens with the
   // previous prescription cycle's result, when there is one. A failure here

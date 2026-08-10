@@ -5,7 +5,8 @@
 
 import type { KeyEvent, BigramStat } from "@/lib/types";
 import type { LayoutIndex } from "./layout";
-import { OUTLIER_MS, percentile, wilsonInterval } from "./stats";
+import { OUTLIER_MS, bootstrapMedianCI, percentile, wilsonInterval } from "./stats";
+import { buildHistogram } from "./histogram";
 
 type BigramAccumulator = {
   n: number;
@@ -67,6 +68,8 @@ export function computeBigramStats(events: KeyEvent[], layout: LayoutIndex): Big
       errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
       errorRateCI: wilsonInterval(acc.errors, acc.n),
       latencyP50: percentile(acc.latencies, 50),
+      latencyCI: bootstrapMedianCI(acc.latencies),
+      latencyHist: buildHistogram(acc.latencies),
       sameFinger: acc.sameFinger,
     });
   }

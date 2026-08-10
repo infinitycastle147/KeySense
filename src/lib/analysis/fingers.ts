@@ -6,7 +6,8 @@
 
 import type { KeyEvent, FingerStat, Finger } from "@/lib/types";
 import type { LayoutIndex } from "./layout";
-import { OUTLIER_MS, median } from "./stats";
+import { OUTLIER_MS, bootstrapMedianCI, median } from "./stats";
+import { extractTransitions, fitResidualModel, computeFingerResiduals } from "./residual";
 
 type FingerAccumulator = {
   n: number;
@@ -61,6 +62,17 @@ export function computeFingerStats(events: KeyEvent[], layout: LayoutIndex): Fin
 
   const overallMedian = median(allLatencies);
 
+  // The adjusted figure that separates "this finger is slow" from "the keys
+  // before it are far away" — see ./residual.ts. Computed from the same event
+  // stream, so both numbers describe the same sample.
+  const transitions = extractTransitions(events, layout);
+  const adjustedByFinger = new Map(
+    computeFingerResiduals(transitions, fitResidualModel(transitions)).map((r) => [
+      r.finger,
+      r.relativeAdjusted,
+    ]),
+  );
+
   const stats: FingerStat[] = [];
   for (const [finger, acc] of groups) {
     const latencyP50 = median(acc.latencies);
@@ -69,7 +81,9 @@ export function computeFingerStats(events: KeyEvent[], layout: LayoutIndex): Fin
       n: acc.n,
       errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
       latencyP50,
+      latencyCI: bootstrapMedianCI(acc.latencies),
       relativeLatency: latencyP50 > 0 && overallMedian > 0 ? latencyP50 / overallMedian : 0,
+      ...(adjustedByFinger.has(finger) ? { relativeAdjusted: adjustedByFinger.get(finger) } : {}),
     });
   }
 

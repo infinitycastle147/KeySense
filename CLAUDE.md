@@ -97,10 +97,17 @@ Budget: **< 16ms** keydown to caret paint. If a change touches the input path, m
 - **The model provider API key never reaches the client.** All model calls go through route
   handlers.
 
-### 6. Prescriptions capture their baseline at creation time
+### 6. Prescriptions capture their baseline at creation time — and a control
 
 A baseline measured after the fact is not a baseline. `prescriptions.baseline` is written
 when the prescription is created, and is never updated.
+
+The same applies to `prescriptions.control.baseline`. The control is the untreated hold-out
+set that makes the verdict a difference-in-differences rather than a pre/post reading — see
+ARCHITECTURE §7.1. Without it, targets selected as extremes improve on re-measurement
+whether or not the drills worked, and every verdict is an artifact. **Never drill, display,
+or otherwise touch `control.targets`**; the moment they receive treatment they stop being a
+control and the correction silently inverts.
 
 ### 7. Offline sync stays conflict-free
 

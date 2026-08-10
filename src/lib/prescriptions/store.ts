@@ -13,7 +13,14 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Prescription, PrescriptionTargetType, PrescriptionVerdict, DrillConfig } from "@/lib/types";
+import type {
+  Prescription,
+  PrescriptionControl,
+  PrescriptionTargetType,
+  PrescriptionVerdict,
+  TargetMeasurement,
+  DrillConfig,
+} from "@/lib/types";
 
 type PrescriptionRow = {
   id: string;
@@ -22,8 +29,12 @@ type PrescriptionRow = {
   target_type: string;
   targets: string[];
   drill_config: DrillConfig;
-  baseline: { errorRate: number; latencyP50: number; n: number };
-  outcome: { errorRate: number; latencyP50: number; n: number } | null;
+  baseline: TargetMeasurement;
+  outcome: TargetMeasurement | null;
+  /** Absent or null for rows created before 0004_prescription_controls.sql —
+   *  optional rather than nullable so a `select` predating the column still
+   *  maps cleanly instead of failing to type-check against reality. */
+  control?: PrescriptionControl | null;
   verdict: string | null;
   status: string;
   drills_target: number;
@@ -41,6 +52,7 @@ export function rowToPrescription(row: PrescriptionRow): Prescription {
     drillConfig: row.drill_config,
     baseline: row.baseline,
     outcome: row.outcome,
+    control: row.control ?? null,
     verdict: row.verdict as PrescriptionVerdict | null,
     status: row.status as Prescription["status"],
     drillsTarget: row.drills_target,
@@ -50,9 +62,9 @@ export function rowToPrescription(row: PrescriptionRow): Prescription {
   };
 }
 
-/** Insert payload for a freshly created prescription. `baseline` is written
- *  once, here, and no function in this module ever updates it again — see
- *  create.ts and CLAUDE.md invariant 6. */
+/** Insert payload for a freshly created prescription. `baseline` — and the
+ *  `baseline` inside `control` — is written once, here, and no function in
+ *  this module ever updates it again. See create.ts and CLAUDE.md invariant 6. */
 export function prescriptionToInsertRow(userId: string, rx: Prescription) {
   return {
     id: rx.id,
@@ -62,6 +74,7 @@ export function prescriptionToInsertRow(userId: string, rx: Prescription) {
     targets: rx.targets,
     drill_config: rx.drillConfig,
     baseline: rx.baseline,
+    control: rx.control,
     status: rx.status,
     drills_target: rx.drillsTarget,
     drills_done: rx.drillsDone,
@@ -125,19 +138,44 @@ export async function incrementDrillsDone(
   return { prescription: rowToPrescription(data as PrescriptionRow), error: null };
 }
 
+/**
+ * Attaches a measured outcome to an existing control without touching its
+ * baseline. `control` is a single JSONB column, so writing it back means
+ * rewriting the whole object — this is the one place that happens, and it
+ * carries `control.baseline` through by reference precisely so no update path
+ * can quietly re-derive it. Returns null unchanged when there is no control.
+ */
+export function withControlOutcome(
+  control: PrescriptionControl | null,
+  outcome: TargetMeasurement | null,
+): PrescriptionControl | null {
+  if (!control) return null;
+  return { targets: control.targets, baseline: control.baseline, outcome };
+}
+
 /** Records the outcome of `evaluate()` and closes out the prescription.
  *  `baseline` is intentionally absent from this update — see CLAUDE.md
- *  invariant 6. */
+ *  invariant 6. `control` is written only via `withControlOutcome`, which
+ *  preserves the control's own frozen baseline for the same reason. */
 export async function completePrescription(
   supabase: AnySupabaseClient,
   id: string,
-  outcome: { errorRate: number; latencyP50: number; n: number },
+  outcome: TargetMeasurement,
   verdict: PrescriptionVerdict,
   completedAt: string,
+  control?: PrescriptionControl | null,
 ): Promise<{ prescription: Prescription | null; error: string | null }> {
   const { data, error } = await supabase
     .from("prescriptions")
-    .update({ outcome, verdict, status: "completed", completed_at: completedAt })
+    .update({
+      outcome,
+      verdict,
+      status: "completed",
+      completed_at: completedAt,
+      // Omitted entirely when undefined, so an uncontrolled completion path
+      // cannot null out a control that is already stored.
+      ...(control !== undefined ? { control } : {}),
+    })
     .eq("id", id)
     .select()
     .single();

@@ -17,15 +17,18 @@
  *   - errorRateCI: recomputed via wilsonInterval on the *pooled* n/errors,
  *     never averaged confidence intervals (averaging CIs is not statistically
  *     meaningful).
- *   - latencyP50 / latencyP90: an n-weighted average of each test's
- *     percentile, NOT a true re-derived percentile over pooled raw samples
- *     (those raw samples aren't available at this tier). This is the
- *     "otherwise n-weighted" branch PHASE-3.md explicitly sanctions. If a
- *     caller has raw CompletedTest.events for the whole window and wants a
- *     true pooled median instead, they can concatenate events per-key/bigram
- *     themselves and call the percentile functions in stats.ts directly —
- *     computeTestAnalysis/buildMetricProfile intentionally do not do this,
- *     to mirror the production storage tier this will actually run against.
+ *   - latencyP50 / latencyP90: pooled from the stored per-test latency
+ *     histograms (migration 0007, src/lib/analysis/histogram.ts), which sum
+ *     bin-wise and therefore give the TRUE pooled percentile rather than an
+ *     average of per-test percentiles. A median is not a mean, so no weighting
+ *     of per-test medians recovers the pooled one — that was a real, if
+ *     bounded, error, and it was worst exactly where it mattered most: a
+ *     bigram seen twice in a test contributed a coin-flip "median" carrying
+ *     full per-observation weight.
+ *
+ *     Rollups written before 0007 carry no histogram, and those fall back to
+ *     the old n-weighted average of percentiles. The fallback is per-row, so a
+ *     window mixing old and new rows uses the exact path wherever it can.
  */
 
 import type {
@@ -44,10 +47,24 @@ import type { LayoutIndex } from "./layout";
 import { computeKeyStats } from "./keys";
 import { computeBigramStats, filterSameFingerBigrams } from "./bigrams";
 import { computeFingerStats } from "./fingers";
-import { computeErrorTaxonomy, computeConfusionMatrix } from "./errors";
+import {
+  computeErrorTaxonomy,
+  computeConfusionMatrix,
+  computeErrorTaxonomyAligned,
+  computeConfusionMatrixAligned,
+  classifyConfusions,
+} from "./errors";
+import { computeCharClassStats, type CharClassStats } from "./charclass";
+import { computeGeometry, type GeometryStats } from "./geometry";
 import { computeFatigueCurve, type FatigueBucket } from "./fatigue";
 import { computeCorrections, type CorrectionStats } from "./corrections";
+import { computeDynamics, type DynamicsStats } from "./dynamics";
+import { computeQuality, isDistracted, type QualityStats } from "./quality";
+import { computeRhythm, type RhythmStats } from "./rhythm";
 import { MIN_FINDING_N, median, wilsonInterval } from "./stats";
+import { rankWeaknesses } from "./ranking";
+import { buildTimeLossModel } from "./timeloss";
+import { mergeHistograms, histogramPercentile, histogramCount } from "./histogram";
 
 export type TestAnalysis = {
   testId: string;
@@ -59,8 +76,24 @@ export type TestAnalysis = {
   fingerStats: FingerStat[];
   errorTaxonomy: ErrorTaxonomy;
   confusionMatrix: ConfusionMatrix;
+  /** False when this test predates the archived word list and had to be
+   *  classified positionally. Carried so a window mixing both is visible
+   *  rather than silently pooled — see computeTestAnalysis. */
+  alignedClassification: boolean;
   fatigue: FatigueBucket[];
   corrections: CorrectionStats;
+  /** Dwell / flight / overlap. All-zero and non-reportable for schema
+   *  version 1 archives, which carry no key releases — see ./dynamics.ts. */
+  dynamics: DynamicsStats;
+  /** Burst/stall structure. Distinct from raw speed: someone who is
+   *  fast-then-freezes types differently from someone evenly slow. */
+  rhythm: RhythmStats;
+  /** How much of this test was actually typing — see ./quality.ts. */
+  quality: QualityStats;
+  /** Shift / capitals / digits / punctuation as their own class. */
+  charClasses: CharClassStats;
+  /** Alternation, scissors, stretches, redirects — see ./geometry.ts. */
+  geometry: GeometryStats;
 };
 
 /** Runs every Part-A metric over one completed test. The per-test building
@@ -70,6 +103,13 @@ export function computeTestAnalysis(
   layout: LayoutIndex,
   bucketSeconds = 10
 ): TestAnalysis {
+  // Alignment is the correct classification and is used whenever the archive
+  // can support it (see ./align.ts). Tests captured before `words` was
+  // archived fall back to the positional reading — degraded, but honest: the
+  // alternative is reconstructing an expected string that was never recorded.
+  const words = test.words;
+  const aligned = words !== undefined && words.length > 0;
+
   return {
     testId: test.id,
     endedAt: test.endedAt,
@@ -78,16 +118,31 @@ export function computeTestAnalysis(
     keyStats: computeKeyStats(test.events),
     bigramStats: computeBigramStats(test.events, layout),
     fingerStats: computeFingerStats(test.events, layout),
-    errorTaxonomy: computeErrorTaxonomy(test.events),
-    confusionMatrix: computeConfusionMatrix(test.events),
+    errorTaxonomy: aligned
+      ? computeErrorTaxonomyAligned(test.events, words)
+      : computeErrorTaxonomy(test.events),
+    confusionMatrix: aligned
+      ? computeConfusionMatrixAligned(test.events, words)
+      : computeConfusionMatrix(test.events),
+    alignedClassification: aligned,
     fatigue: computeFatigueCurve(test.events, test.durationMs, bucketSeconds),
     corrections: computeCorrections(test.events),
+    dynamics: computeDynamics(test.events, test.keyups ?? []),
+    rhythm: computeRhythm(test.events),
+    quality: computeQuality(test.events, test.durationMs),
+    charClasses: computeCharClassStats(test.events),
+    geometry: computeGeometry(test.events, layout),
   };
 }
 
 export type BuildProfileOptions = {
   /** How many rows to keep in each top-N list. Default 10. */
   topN?: number;
+  /** Config fingerprints, one per analysis in the same order (mode,
+   *  punctuation, numbers, language, layout). When supplied, `configMatched`
+   *  reports whether the window is homogeneous. Omitted means "unknown", which
+   *  is reported as not matched — the conservative reading. */
+  configFingerprints?: string[];
   /** Must match the bucketSeconds used when the TestAnalyses were built. */
   bucketSeconds?: number;
   /** A prior window (e.g. the same-length window ending N days earlier) to
@@ -95,6 +150,11 @@ export type BuildProfileOptions = {
    *  never a population norm — so this must come from the caller, not from
    *  any hardcoded norm. */
   previousWindow?: TestAnalysis[];
+  /** Needed to attach a root cause to each confusion (see classifyConfusions).
+   *  Optional: without it the pairs are still reported, just unexplained —
+   *  better than guessing a cause from a layout that may not be the one the
+   *  tests were typed on. */
+  layout?: LayoutIndex;
 };
 
 const DEFAULT_TOP_N = 10;
@@ -114,17 +174,45 @@ function measured(values: number[], n: number): Measured<number> {
   return { value: median(values), n, reportable: n >= MIN_FINDING_N };
 }
 
+/**
+ * Pools a percentile across a window.
+ *
+ * Prefers summing the stored distributions, which gives the true pooled
+ * percentile. Falls back to the n-weighted average of per-test percentiles for
+ * rollups written before histograms existed — documented in the module header
+ * as an approximation, and now only used where nothing better survives.
+ */
+function poolPercentile(
+  histograms: (number[] | undefined)[],
+  fallback: { value: number; weight: number }[],
+  p: number,
+): number {
+  const present = histograms.filter((h): h is number[] => Array.isArray(h) && h.length > 0);
+  if (present.length > 0) {
+    const merged = mergeHistograms(present);
+    if (histogramCount(merged) > 0) return histogramPercentile(merged, p);
+  }
+  return weightedAverage(fallback);
+}
+
 function mergeKeyStats(analyses: TestAnalysis[]): KeyStat[] {
-  type Acc = { n: number; errors: number; p50s: { value: number; weight: number }[]; p90s: { value: number; weight: number }[] };
+  type Acc = {
+    n: number;
+    errors: number;
+    p50s: { value: number; weight: number }[];
+    p90s: { value: number; weight: number }[];
+    hists: (number[] | undefined)[];
+  };
   const groups = new Map<string, Acc>();
 
   for (const analysis of analyses) {
     for (const ks of analysis.keyStats) {
-      const acc = groups.get(ks.key) ?? { n: 0, errors: 0, p50s: [], p90s: [] };
+      const acc = groups.get(ks.key) ?? { n: 0, errors: 0, p50s: [], p90s: [], hists: [] };
       acc.n += ks.n;
       acc.errors += ks.errors;
       acc.p50s.push({ value: ks.latencyP50, weight: ks.n });
       acc.p90s.push({ value: ks.latencyP90, weight: ks.n });
+      acc.hists.push(ks.latencyHist);
       groups.set(ks.key, acc);
     }
   }
@@ -137,23 +225,30 @@ function mergeKeyStats(analyses: TestAnalysis[]): KeyStat[] {
       errors: acc.errors,
       errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
       errorRateCI: wilsonInterval(acc.errors, acc.n),
-      latencyP50: weightedAverage(acc.p50s),
-      latencyP90: weightedAverage(acc.p90s),
+      latencyP50: poolPercentile(acc.hists, acc.p50s, 50),
+      latencyP90: poolPercentile(acc.hists, acc.p90s, 90),
     });
   }
   return merged;
 }
 
 function mergeBigramStats(analyses: TestAnalysis[]): BigramStat[] {
-  type Acc = { n: number; errors: number; p50s: { value: number; weight: number }[]; sameFinger: boolean };
+  type Acc = {
+    n: number;
+    errors: number;
+    p50s: { value: number; weight: number }[];
+    hists: (number[] | undefined)[];
+    sameFinger: boolean;
+  };
   const groups = new Map<string, Acc>();
 
   for (const analysis of analyses) {
     for (const bs of analysis.bigramStats) {
-      const acc = groups.get(bs.bigram) ?? { n: 0, errors: 0, p50s: [], sameFinger: bs.sameFinger };
+      const acc = groups.get(bs.bigram) ?? { n: 0, errors: 0, p50s: [], hists: [], sameFinger: bs.sameFinger };
       acc.n += bs.n;
       acc.errors += bs.errors;
       acc.p50s.push({ value: bs.latencyP50, weight: bs.n });
+      acc.hists.push(bs.latencyHist);
       acc.sameFinger = acc.sameFinger || bs.sameFinger;
       groups.set(bs.bigram, acc);
     }
@@ -167,7 +262,7 @@ function mergeBigramStats(analyses: TestAnalysis[]): BigramStat[] {
       errors: acc.errors,
       errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
       errorRateCI: wilsonInterval(acc.errors, acc.n),
-      latencyP50: weightedAverage(acc.p50s),
+      latencyP50: poolPercentile(acc.hists, acc.p50s, 50),
       sameFinger: acc.sameFinger,
     });
   }
@@ -175,15 +270,25 @@ function mergeBigramStats(analyses: TestAnalysis[]): BigramStat[] {
 }
 
 function mergeFingerStats(analyses: TestAnalysis[]): FingerStat[] {
-  type Acc = { n: number; errors: number; p50s: { value: number; weight: number }[] };
+  type Acc = {
+    n: number;
+    errors: number;
+    p50s: { value: number; weight: number }[];
+    adjusted: { value: number; weight: number }[];
+  };
   const groups = new Map<Finger, Acc>();
 
   for (const analysis of analyses) {
     for (const fs of analysis.fingerStats) {
-      const acc = groups.get(fs.finger) ?? { n: 0, errors: 0, p50s: [] };
+      const acc = groups.get(fs.finger) ?? { n: 0, errors: 0, p50s: [], adjusted: [] };
       acc.n += fs.n;
       acc.errors += Math.round(fs.errorRate * fs.n);
       acc.p50s.push({ value: fs.latencyP50, weight: fs.n });
+      // Tests that couldn't fit the model contribute nothing rather than a 0,
+      // which would read as "perfectly average" instead of "unknown".
+      if (fs.relativeAdjusted !== undefined) {
+        acc.adjusted.push({ value: fs.relativeAdjusted, weight: fs.n });
+      }
       groups.set(fs.finger, acc);
     }
   }
@@ -209,6 +314,9 @@ function mergeFingerStats(analyses: TestAnalysis[]): FingerStat[] {
       errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
       latencyP50,
       relativeLatency: latencyP50 > 0 && overallBaseline > 0 ? latencyP50 / overallBaseline : 0,
+      ...(acc.adjusted.length > 0
+        ? { relativeAdjusted: weightedAverage(acc.adjusted) }
+        : {}),
     });
   }
   return merged;
@@ -296,20 +404,221 @@ function mergeCorrections(analyses: TestAnalysis[]): { backspaceRate: number; me
   };
 }
 
-/** Sorted descending by errorRate, ties broken by latencyP50 descending —
- *  the simplest defensible "badness" ranking given only these two axes.
- *  Documented judgement call: a more sophisticated composite score (e.g.
- *  normalized weighted blend) is plausible future work but not required by
- *  PHASE-3.md, and premature normalization risks being harder to reason
- *  about than it's worth for a top-N display list. */
-function rankByBadness<T extends { errorRate: number; latencyP50: number; n: number }>(
-  stats: T[],
-  topN: number
-): T[] {
-  return stats
-    .filter((s) => s.n >= MIN_FINDING_N)
-    .sort((a, b) => b.errorRate - a.errorRate || b.latencyP50 - a.latencyP50)
-    .slice(0, topN);
+/**
+ * Ranks by *shrunken* error rate and keeps only rows that survive FDR control
+ * — see ./ranking.ts for why sorting on the raw rate manufactures findings.
+ *
+ * The n >= MIN_FINDING_N gate still runs first, and is not redundant with the
+ * statistics: it is a floor on whether a row is worth *considering at all*,
+ * where shrinkage and FDR then decide whether it is worth *reporting*. Fitting
+ * the prior on rows that already cleared the floor also keeps a swarm of
+ * 2-observation bigrams from defining the population everything else is
+ * corrected against.
+ *
+ * Non-discoveries are dropped rather than shown greyed-out: this list feeds
+ * the model and the prescription flow, and anything present in it is liable to
+ * be treated as a real weakness regardless of an accompanying flag.
+ */
+function rankByBadness<T extends BigramStat | KeyStat>(stats: T[], topN: number): T[] {
+  const eligible = stats.filter((s) => s.n >= MIN_FINDING_N);
+  return rankWeaknesses(eligible)
+    .filter((r) => r.significant)
+    .slice(0, topN)
+    .map((r) => r.row);
+}
+
+/** Pools rhythm across the window. Burst and stall are reported as *rates*
+ *  rather than counts: a count conflates "types erratically" with "typed a
+ *  lot", and only the first is a finding. */
+function mergeRhythm(analyses: TestAnalysis[]) {
+  const ikis: { value: number; weight: number }[] = [];
+  const cvs: { value: number; weight: number }[] = [];
+  let bursts = 0;
+  let stalls = 0;
+  let n = 0;
+
+  for (const a of analyses) {
+    if (a.rhythm.n === 0) continue;
+    ikis.push({ value: a.rhythm.medianIki, weight: a.rhythm.n });
+    cvs.push({ value: a.rhythm.coefficientOfVariation, weight: a.rhythm.n });
+    bursts += a.rhythm.burstCount;
+    stalls += a.rhythm.stallCount;
+    n += a.rhythm.n;
+  }
+
+  return {
+    medianIki: weightedAverage(ikis),
+    coefficientOfVariation: weightedAverage(cvs),
+    burstRate: n > 0 ? bursts / n : 0,
+    stallRate: n > 0 ? stalls / n : 0,
+    n,
+  };
+}
+
+/** Pools dwell/flight/overlap over the tests that actually have releases.
+ *  Version-1 tests contribute nothing rather than zeros, which would drag
+ *  every figure toward zero and read as "this typist holds keys for 0ms". */
+function mergeDynamics(analyses: TestAnalysis[]) {
+  const dwell: { value: number; weight: number }[] = [];
+  const flight: { value: number; weight: number }[] = [];
+  const overlap: { value: number; weight: number }[] = [];
+  let n = 0;
+
+  for (const a of analyses) {
+    const d = a.dynamics;
+    if (d.dwellP50.n === 0) continue;
+    dwell.push({ value: d.dwellP50.value, weight: d.dwellP50.n });
+    flight.push({ value: d.flightP50.value, weight: d.flightP50.n });
+    overlap.push({ value: d.overlapRate.value, weight: d.overlapRate.n });
+    n += d.dwellP50.n;
+  }
+
+  return {
+    available: n > 0,
+    dwellP50: weightedAverage(dwell),
+    flightP50: weightedAverage(flight),
+    overlapRate: weightedAverage(overlap),
+    n,
+  };
+}
+
+/** Pools data quality. `discardRate` comes from pooled counts, not an average
+ *  of per-test rates — one 4-keystroke test with a single pause would
+ *  otherwise dominate a window of clean long ones. */
+function mergeQuality(analyses: TestAnalysis[]) {
+  let intervals = 0;
+  let discarded = 0;
+  let distracted = 0;
+
+  for (const a of analyses) {
+    intervals += a.quality.intervalCount;
+    discarded += a.quality.discardedCount;
+    if (isDistracted(a.quality)) distracted += 1;
+  }
+
+  return {
+    discardRate: intervals > 0 ? discarded / intervals : 0,
+    distractedTests: distracted,
+    testCount: analyses.length,
+  };
+}
+
+/** Pools per-class stats. Rates come from pooled counts; `relativeToLowercase`
+ *  is recomputed from pooled latencies rather than averaged, since a ratio of
+ *  averages is not the average of ratios. */
+function mergeCharClasses(analyses: TestAnalysis[]) {
+  const groups = new Map<string, { n: number; errors: number; lat: { value: number; weight: number }[] }>();
+
+  for (const a of analyses) {
+    for (const c of a.charClasses.classes) {
+      const acc = groups.get(c.charClass) ?? { n: 0, errors: 0, lat: [] };
+      acc.n += c.n;
+      acc.errors += c.errors;
+      if (c.latencyP50 > 0) acc.lat.push({ value: c.latencyP50, weight: c.n });
+      groups.set(c.charClass, acc);
+    }
+  }
+
+  const latencyOf = (name: string) => {
+    const acc = groups.get(name);
+    return acc ? weightedAverage(acc.lat) : 0;
+  };
+  const lowercase = latencyOf("lowercase");
+
+  return [...groups.entries()].map(([charClass, acc]) => {
+    const latency = weightedAverage(acc.lat);
+    return {
+      charClass,
+      n: acc.n,
+      errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
+      relativeToLowercase: lowercase > 0 && latency > 0 ? latency / lowercase : 0,
+    };
+  });
+}
+
+function mergeShift(analyses: TestAnalysis[]) {
+  let shiftedN = 0;
+  let shiftedErrors = 0;
+  let unshiftedN = 0;
+  let unshiftedErrors = 0;
+
+  for (const a of analyses) {
+    const s = a.charClasses;
+    shiftedN += s.shiftedErrorRate.n;
+    shiftedErrors += s.shiftedErrorRate.value * s.shiftedErrorRate.n;
+    unshiftedN += s.unshiftedErrorRate.n;
+    unshiftedErrors += s.unshiftedErrorRate.value * s.unshiftedErrorRate.n;
+  }
+
+  return {
+    shiftedErrorRate: shiftedN > 0 ? shiftedErrors / shiftedN : 0,
+    unshiftedErrorRate: unshiftedN > 0 ? unshiftedErrors / unshiftedN : 0,
+    n: shiftedN,
+  };
+}
+
+function mergeGeometry(analyses: TestAnalysis[]) {
+  const groups = new Map<string, { n: number; errors: number; lat: { value: number; weight: number }[] }>();
+  const alternations: { value: number; weight: number }[] = [];
+  const runs: { value: number; weight: number }[] = [];
+  const redirects: { value: number; weight: number }[] = [];
+  let n = 0;
+
+  for (const a of analyses) {
+    for (const shape of a.geometry.shapes) {
+      const acc = groups.get(shape.shape) ?? { n: 0, errors: 0, lat: [] };
+      acc.n += shape.n;
+      acc.errors += shape.errors;
+      if (shape.latencyP50 > 0) acc.lat.push({ value: shape.latencyP50, weight: shape.n });
+      groups.set(shape.shape, acc);
+    }
+    if (a.geometry.alternationRate.n > 0) {
+      alternations.push({ value: a.geometry.alternationRate.value, weight: a.geometry.alternationRate.n });
+      runs.push({ value: a.geometry.medianSameHandRun, weight: a.geometry.alternationRate.n });
+      n += a.geometry.alternationRate.n;
+    }
+    if (a.geometry.redirectRate.n > 0) {
+      redirects.push({ value: a.geometry.redirectRate.value, weight: a.geometry.redirectRate.n });
+    }
+  }
+
+  return {
+    shapes: [...groups.entries()].map(([shape, acc]) => ({
+      shape,
+      n: acc.n,
+      errorRate: acc.n > 0 ? acc.errors / acc.n : 0,
+      latencyP50: weightedAverage(acc.lat),
+    })),
+    alternationRate: weightedAverage(alternations),
+    medianSameHandRun: weightedAverage(runs),
+    redirectRate: weightedAverage(redirects),
+    n,
+  };
+}
+
+/** Impact ranking, alongside the error-rate ranking. Gated at MIN_FINDING_N
+ *  like everything else — a WPM cost computed from three observations is a
+ *  precise-looking number with nothing behind it. */
+function buildTimeLoss(bigrams: BigramStat[], topN: number) {
+  const model = buildTimeLossModel(bigrams, MIN_FINDING_N);
+  return {
+    floorMs: model.floorMs,
+    baselineWpm: model.baselineWpm,
+    top: model.losses.slice(0, topN).map((l) => ({
+      bigram: l.bigram,
+      n: l.n,
+      excessMs: l.excessMs,
+      wpmCost: l.wpmCost,
+    })),
+  };
+}
+
+/** A window is config-matched when every test in it was the same task. Unknown
+ *  fingerprints report false: claiming a match we cannot verify would let a
+ *  mixed-workload trend be read as a skill trend. */
+function isConfigMatched(fingerprints: string[] | undefined): boolean {
+  if (!fingerprints || fingerprints.length === 0) return false;
+  return fingerprints.every((f) => f === fingerprints[0]);
 }
 
 function emptyProfile(bucketSeconds: number): MetricProfile {
@@ -330,6 +639,15 @@ function emptyProfile(bucketSeconds: number): MetricProfile {
     sameFingerBigrams: [],
     fatigue: { bucketSeconds, wpm: [] },
     corrections: { backspaceRate: 0, meanCharsToNotice: { value: 0, n: 0, reportable: false } },
+    rhythm: { medianIki: 0, coefficientOfVariation: 0, burstRate: 0, stallRate: 0, n: 0 },
+    dynamics: { available: false, dwellP50: 0, flightP50: 0, overlapRate: 0, n: 0 },
+    quality: { discardRate: 0, distractedTests: 0, testCount: 0 },
+    charClasses: [],
+    shift: { shiftedErrorRate: 0, unshiftedErrorRate: 0, n: 0 },
+    geometry: { shapes: [], alternationRate: 0, medianSameHandRun: 0, redirectRate: 0, n: 0 },
+    classifiedConfusions: [],
+    timeLoss: { floorMs: 0, baselineWpm: 0, top: [] },
+    configMatched: false,
     trend: { wpmDelta: 0, accuracyDelta: 0, comparedToDays: 0 },
   };
 }
@@ -389,12 +707,22 @@ export function buildMetricProfile(analyses: TestAnalysis[], opts: BuildProfileO
     fingers: mergedFingerStats,
     errorTaxonomy: mergeErrorTaxonomy(analyses),
     topConfusions: topConfusionsFromMatrix(confusionMatrix, topN),
-    sameFingerBigrams: filterSameFingerBigrams(mergedBigramStats)
-      .filter((b) => b.n >= MIN_FINDING_N)
-      .sort((a, b) => b.errorRate - a.errorRate)
-      .slice(0, topN),
+    // Same correction as worstBigrams: an SFB list ranked on raw rates would
+    // reintroduce exactly the selection artifact ranking.ts removes.
+    sameFingerBigrams: rankByBadness(filterSameFingerBigrams(mergedBigramStats), topN),
     fatigue: mergeFatigue(analyses, bucketSeconds),
     corrections: mergeCorrections(analyses),
+    rhythm: mergeRhythm(analyses),
+    dynamics: mergeDynamics(analyses),
+    quality: mergeQuality(analyses),
+    charClasses: mergeCharClasses(analyses),
+    shift: mergeShift(analyses),
+    geometry: mergeGeometry(analyses),
+    classifiedConfusions: opts.layout
+      ? classifyConfusions(confusionMatrix, opts.layout, topN)
+      : [],
+    timeLoss: buildTimeLoss(mergedBigramStats, topN),
+    configMatched: isConfigMatched(opts.configFingerprints),
     trend,
   };
 }

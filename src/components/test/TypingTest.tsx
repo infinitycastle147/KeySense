@@ -33,6 +33,7 @@ import type { CompletedTest, TestConfig } from "@/lib/types";
 import { WordList } from "./WordList";
 import { TestConfigBar } from "./TestConfigBar";
 import { TestTimer } from "./TestTimer";
+import { recordKeydownLatency } from "@/lib/engine/latency-probe";
 
 const APP_VERSION = "0.1.0";
 
@@ -225,8 +226,26 @@ export function TypingTest({
       // the engine is the single source of truth for what was "typed".
       e.preventDefault();
       engine?.handleKeyDown(native);
+      // No-op unless the probe was explicitly enabled — see latency-probe.ts.
+      recordKeydownLatency(native.timeStamp);
     },
     [engine]
+  );
+
+  /**
+   * Key releases. Passed through unfiltered — unlike keydown, there is no key
+   * class to exclude here: a release carries no content, so recording every one
+   * costs nothing and filtering risks dropping the release of a key whose press
+   * we did record. The engine ignores releases outside a running test.
+   *
+   * No `preventDefault`: a keyup has no default to prevent, and calling it
+   * would put work on the input path for no reason.
+   */
+  const onKeyUp = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      engine?.handleKeyUp(e.nativeEvent);
+    },
+    [engine],
   );
 
   const configVisible = status !== "running" || configOverride;
@@ -258,6 +277,7 @@ export function TypingTest({
         spellCheck={false}
         aria-label="Typing test input"
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         onCompositionStart={() => engine?.handleCompositionStart()}
         onCompositionEnd={() => engine?.handleCompositionEnd()}
         onChange={() => {

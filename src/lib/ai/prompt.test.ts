@@ -15,6 +15,15 @@ function compactProfile(): CompactProfile {
     errorTaxonomy: [],
     topConfusions: [],
     corrections: { backspaceRate: 0, meanCharsToNotice: null, n: 0 },
+    rhythm: null,
+    dynamics: null,
+    quality: { discardRate: 0, distractedTests: 0, testCount: 0 },
+    charClasses: [],
+    shift: null,
+    geometry: null,
+    classifiedConfusions: [],
+    timeLoss: { floorMs: 0, baselineWpm: 0, top: [] },
+    configMatched: true,
     trend: { wpmDelta: 0, accuracyDelta: 0, comparedToDays: 0 },
   };
 }
@@ -43,6 +52,8 @@ describe("buildUserMessage", () => {
         outcomeErrorRate: 0.031,
         drillsCompleted: 6,
         completedAt: "2026-08-05T00:00:00.000Z",
+        controlled: true,
+        lift: 0.22,
       },
       active: [],
     };

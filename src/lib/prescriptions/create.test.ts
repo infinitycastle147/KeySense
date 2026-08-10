@@ -4,6 +4,7 @@ import { evaluate } from "./evaluate";
 import { DEFAULT_TARGET_RATIO } from "@/lib/drills/generate";
 import type { TargetStat } from "./baseline";
 import type { TestAnalysis } from "@/lib/analysis/profile";
+import { makeTestAnalysis } from "@/lib/analysis/test-utils";
 import { MIN_FINDING_N } from "@/lib/analysis/stats";
 
 function reportableBaseline(overrides: Partial<TargetStat> = {}): TargetStat {
@@ -77,10 +78,9 @@ describe("createPrescription — the baseline invariant", () => {
     const baselineSnapshot = { ...rx.baseline };
 
     const postAnalyses: TestAnalysis[] = [
-      {
+      makeTestAnalysis({
         testId: "after-1",
         endedAt: "2026-09-01T00:00:00.000Z", // after createdAt
-        durationMs: 30000,
         result: {
           wpm: 70,
           rawWpm: 72,
@@ -91,7 +91,6 @@ describe("createPrescription — the baseline invariant", () => {
           charsExtra: 0,
           charsMissed: 0,
         },
-        keyStats: [],
         bigramStats: [
           {
             bigram: "ol",
@@ -103,17 +102,7 @@ describe("createPrescription — the baseline invariant", () => {
             sameFinger: true,
           },
         ],
-        fingerStats: [],
-        errorTaxonomy: { substitution: 0, insertion: 0, omission: 0, transposition: 0 },
-        confusionMatrix: {},
-        fatigue: [],
-        corrections: {
-          backspaceCount: 0,
-          charAttemptCount: 0,
-          backspaceRate: 0,
-          meanCharsToNotice: { value: 0, n: 0, reportable: false },
-        },
-      },
+      }),
     ];
 
     const result = evaluate(rx, postAnalyses);

@@ -225,6 +225,20 @@ Headline WPM and accuracy are useless for diagnosis. Signal lives in:
 | **Per-bigram latency + error rate** | Highest-value metric. Weakness lives in *transitions*, not keys. |
 | **Confusion matrix** (intended → typed) | Separates adjacent-key slips from finger confusion from sequencing errors — different root causes, different drills. |
 | **Error taxonomy** (substitution / insertion / omission / **transposition**) | Transpositions specifically indicate hand-alternation timing problems. Highly actionable. |
+
+> **Errors are classified by sequence alignment, not by position.** Comparing each
+> keystroke to `word[charIdx]` is correct for the caret and wrong for diagnosis: one
+> dropped character shifts every position after it, so `hello` typed as `helo` reads as a
+> confusion of `l` with `o` that the typist never had — and in longer words the cascade
+> manufactures a whole run of fabricated pairs, which then flow into `topConfusions` and
+> into the model's prompt as if they were evidence. `src/lib/analysis/align.ts` aligns the
+> typed string against the expected one and reports the gap as a gap. This is also the only
+> way mid-word omissions become countable at all, since a character that is never typed
+> produces no keydown.
+>
+> Alignment needs the prompt text, so `test_events.words` archives it (migration 0005).
+> Tests captured before that column fall back to positional classification and are flagged
+> with `TestAnalysis.alignedClassification: false` rather than silently pooled.
 | **Same-finger bigrams (SFBs)** | Universal weak point; worth isolating explicitly. |
 | **Finger / hand attribution** | Via layout map → "right pinky at 2.1× median latency." |
 | **Rhythm** | Inter-key-interval variance; burst-then-stall patterns. |
@@ -286,6 +300,50 @@ good — if prescriptions routinely produce no change, the diagnosis is wrong.
 
 **This must exist in the schema from day one.** Retrofitting baselines is impossible; the
 baseline has to be captured at the moment of prescription.
+
+### 7.1 The verdict must be controlled
+
+A bare before/after comparison of the numbers above is **not evidence**, and treating it as
+evidence would quietly defeat the entire purpose of this section.
+
+Targets are chosen as the worst rows of a ranked list built from noisy estimates. A bigram
+reaches the top partly because it is genuinely bad and partly because its estimate was
+unlucky in that window. Re-measure it later and the unlucky part washes out: **the target
+improves whether or not the drills did anything.** Every prescription would report
+`improved` or `resolved`, and the loop would confirm the diagnosis regardless of whether
+the diagnosis was right.
+
+So every prescription also carries a **hold-out control**: the same-type targets ranked
+immediately below the treated set, captured with their own baseline at the same moment,
+and then *never drilled and never shown*. They were drawn from the same tail of the same
+distribution, so they regress by the same amount. The verdict is read off the difference:
+
+```
+lift = improvement(treated) − improvement(control)
+```
+
+Consequences that must not be softened:
+
+- **Verdicts are harder to earn than pre/post.** A target that improved 60% while its
+  control improved 45% is `improved` (15% attributable), not `resolved`. That is the
+  correction working.
+- **`control.baseline` is as immutable as `baseline`.** A control measured after the fact
+  is not a control.
+- **Both sides are measured over the identical window by the identical extractor.** Any
+  asymmetry in *how* they are measured reappears in `lift` as a treatment effect that
+  isn't there.
+- **An uncontrolled verdict is labelled, never disguised.** `class` targets admit no valid
+  control (the taxonomy classes partition the error population, so their shares are
+  mechanically coupled), and prescriptions predating this mechanism have none. Those fall
+  back to pre/post and carry `controlled: false` all the way into the report prompt.
+
+`src/lib/prescriptions/scorecard.ts` aggregates this across prescriptions. Its headline is
+**median lift, not the resolved count** — a run of `resolved` verdicts is exactly what
+regression to the mean produces on its own, whereas median lift is the quantity that sits
+at zero when the diagnosis is doing nothing.
+
+See `src/lib/prescriptions/control.ts` for selection and
+`src/lib/prescriptions/evaluate.ts` for the verdict rule.
 
 ---
 

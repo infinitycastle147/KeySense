@@ -11,6 +11,7 @@ function rx(overrides: Partial<Prescription>): Prescription {
     drillConfig: { wordCount: 40, targetRatio: 0.7, corpus: "english_5k" },
     baseline: { errorRate: 0.084, latencyP50: 210, n: 340 },
     outcome: null,
+    control: null,
     verdict: null,
     status: "active",
     drillsTarget: 5,

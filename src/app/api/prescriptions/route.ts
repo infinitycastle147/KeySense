@@ -13,6 +13,7 @@ import { createClient } from "@/lib/db/supabase/server";
 import { listPrescriptions, insertPrescription } from "@/lib/prescriptions/store";
 import { createPrescription, InsufficientBaselineError } from "@/lib/prescriptions/create";
 import { extractFromCompactProfile } from "@/lib/prescriptions/baseline";
+import { selectControlTargets } from "@/lib/prescriptions/control";
 import type { CompactProfile } from "@/lib/ai/profile-input";
 import type { Finding } from "@/lib/types";
 
@@ -70,6 +71,19 @@ export async function POST(request: Request) {
   const compact = report.input_profile as CompactProfile;
   const baseline = extractFromCompactProfile(compact, finding.targetType, finding.targets);
 
+  // The hold-out is drawn from the same profile, in the same moment, by the
+  // same extractor as the treated baseline. Measuring it later, or from a
+  // different window, would leave the two sides incomparable and make `lift`
+  // meaningless. It is never returned to the client and never drilled.
+  const controlTargets = selectControlTargets(compact, finding.targetType, finding.targets);
+  const control =
+    controlTargets.length > 0
+      ? {
+          targets: controlTargets,
+          baseline: extractFromCompactProfile(compact, finding.targetType, controlTargets),
+        }
+      : undefined;
+
   let prescription;
   try {
     prescription = createPrescription({
@@ -77,6 +91,7 @@ export async function POST(request: Request) {
       targetType: finding.targetType,
       targets: finding.targets,
       baseline,
+      control,
     });
   } catch (err) {
     if (err instanceof InsufficientBaselineError) {

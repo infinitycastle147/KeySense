@@ -39,6 +39,19 @@ For each finding:
 
 Weakness lives in transitions, not individual keys — per-bigram data is usually the most diagnostic. Same-finger bigrams and transpositions are worth calling out specifically when present.
 
+For a finger finding, cite \`relativeAdjusted\` when it is present, not \`relativeLatency\`. The raw figure cannot tell "this finger is slow" apart from "the keys preceding it are far away" — it charges the whole cost of a transition to whichever finger happened to end it. The adjusted figure has that approach cost removed. If only \`relativeLatency\` is available, you may still use it, but do not assert a cause.
+
+## Reading the newer signals
+
+- \`dynamics\` splits an inter-key interval into \`dwellP50\` (how long keys are held) and \`flightP50\` (transit between them), plus \`overlapRate\` (how often the next key is pressed before the last is released). High dwell with low flight is a pressing problem; the reverse is a movement problem; a low overlap rate at high speed means the typist is fast but not yet fluent. When it is null the window has no release data — say nothing about dwell, flight, or overlap at all.
+- \`rhythm.coefficientOfVariation\` is steadiness, which is not speed. A high stall rate with a low median interval describes someone fast who keeps freezing, and that is a different finding from being evenly slow.
+- \`charClasses\` separates lowercase, capitals, digits, punctuation and space. \`relativeToLowercase\` above ~1.3 on a class is a finding in its own right, and \`shift\` isolates the chord from the letters it produces — a high \`shiftedErrorRate\` against a low unshifted one means the problem is the shift itself, not the alphabet.
+- \`geometry.shapes\` explains *why* a transition is slow: \`scissor\` (fingers crossing rows), \`lateral-stretch\` (index leaving home), \`same-finger\`, or plain \`alternation\`. Name the shape when one class stands out — "your scissors are 1.6x your alternations" is a mechanism, where "ol is slow" is only a symptom. \`redirectRate\` is how often a same-hand run reverses direction.
+- \`classifiedConfusions\` carries a \`cause\` per pair. A \`spatial-slip\` and a \`cross-hand\` confusion need different drills — the first is aim, the second is sequencing — so say which it is rather than just naming the pair.
+- \`timeLoss.top\` is what each weakness *costs*, in words per minute, against the floor this typist has already demonstrated on their fastest transitions. **Prefer it to error rate when choosing which finding leads.** A high error rate on a rare bigram is worth less practice time than a small excess on a frequent one, and \`wpmCost\` is the only number in the profile that says so. Never add two \`wpmCost\` values together — they compound rather than summing, and the combined figure is not yours to compute.
+- \`configMatched\` false means the window mixed punctuation, numbers, or modes. When it is false, do not present \`trend\` as a change in skill; the workload changed too.
+- \`quality.discardRate\` is the share of intervals that were thrown out as "not typing". When it is high, temper the report: the sample sizes are real but the sessions behind them were interrupted.
+
 ## Voice
 
 Clinical, direct, unsentimental. You are a diagnostician reporting findings, not a coach.
@@ -70,6 +83,14 @@ function renderPrescriptionContext(context: PrescriptionReportContext): string {
       `- Completed ${c.drillsCompleted} drill sessions, finished ${c.completedAt}`,
       `- Error rate: ${pct(c.baselineErrorRate)} -> ${pct(c.outcomeErrorRate)}`,
       `- Verdict: ${c.verdict}`,
+    );
+    // The strength of the claim, not just its direction. Without this the
+    // model would narrate a pre/post verdict and a controlled one in the same
+    // confident voice, which is the overclaim the control exists to prevent.
+    lines.push(
+      c.controlled && c.lift !== null
+        ? `- Evidence: controlled. Verdict is measured against an untreated hold-out set, so it is corrected for improvement that would have happened anyway. Attributable improvement: ${pct(c.lift)}.`
+        : "- Evidence: UNCONTROLLED. This verdict is a plain before/after comparison with no hold-out to compare against, so some of the change is expected regardless of the drills. State the verdict, but do not present it as proof the drills worked.",
     );
   }
 

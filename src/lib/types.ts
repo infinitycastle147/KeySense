@@ -11,7 +11,9 @@
  * Bump `EVENT_SCHEMA_VERSION` if that ever becomes necessary.
  */
 
-export const EVENT_SCHEMA_VERSION = 1;
+/** 2 — key releases are captured (see `KeyUpEvent`). Version 1 archives have
+ *  keydowns only, and every dynamics metric is unavailable for them. */
+export const EVENT_SCHEMA_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Capture
@@ -44,6 +46,36 @@ export type KeyEvent = {
    * keydown) while leaving omissions derivable by the analysis layer.
    */
   missed?: number;
+};
+
+/**
+ * One key release.
+ *
+ * Kept in its own array rather than interleaved into `KeyEvent[]`, for two
+ * reasons that both matter:
+ *
+ *   1. A release has no `expected`, no `ok`, no `charIdx` — nearly every
+ *      KeyEvent field would be meaningless filler, and filler in an immutable
+ *      archive is a lie waiting to be read back as data.
+ *   2. Every latency metric in src/lib/analysis/ walks consecutive events and
+ *      takes `t[i] - t[i-1]`. Interleaving releases would silently halve or
+ *      corrupt every one of those intervals — a change with no failing test to
+ *      announce it, which is the exact failure mode this codebase is built to
+ *      avoid.
+ *
+ * Why capture it at all: a keydown-only log collapses dwell (how long a key is
+ * held) and flight (how long the hand is in transit) into a single composite
+ * interval. Two typists with identical 180ms transitions — one holding keys
+ * 140ms, the other 40ms — have opposite problems and opposite prescriptions,
+ * and are indistinguishable without this. Overlap (a key going down before the
+ * previous is released) is the clearest single marker of fluent typing and is
+ * likewise invisible without releases.
+ */
+export type KeyUpEvent = {
+  /** ms from test start. From `event.timeStamp`, same clock base as KeyEvent.t. */
+  t: number;
+  /** The key released, as reported by the browser. */
+  key: string;
 };
 
 export type TestMode = "time" | "words" | "quote" | "zen" | "drill";
@@ -82,6 +114,25 @@ export type CompletedTest = {
   config: TestConfig;
   result: TestResult;
   events: KeyEvent[];
+  /** Key releases, in order. Absent on archives written before schema
+   *  version 2 — dynamics metrics are simply unavailable for those, never
+   *  approximated. */
+  keyups?: KeyUpEvent[];
+  /**
+   * The prompt the user was asked to type, word by word.
+   *
+   * Part of the immutable archive, not a convenience field. Without it the
+   * event log cannot be replayed: `KeyEvent.expected` only covers positions
+   * the user actually reached, so a word left incomplete loses its tail
+   * entirely (only a `missed` count survives). Sequence alignment — which is
+   * what separates a dropped character from a run of fabricated substitutions,
+   * see src/lib/analysis/align.ts — needs the whole expected string.
+   *
+   * Optional because tests archived before this field existed genuinely do not
+   * have it, and inventing one would be worse than an honest absence. The
+   * analysis layer falls back to positional classification for those.
+   */
+  words?: string[];
   source: TestSource;
   prescriptionId: string | null;
   deviceId: string;
@@ -113,6 +164,19 @@ export type KeyStat = {
   errorRateCI: Interval;
   latencyP50: number;
   latencyP90: number;
+  /** Bootstrap confidence interval on `latencyP50`.
+   *
+   *  Optional because not every producer has the raw interval samples to
+   *  resample from — pooled rollups (see profile.ts) carry per-test
+   *  percentiles, not the underlying observations. Absent means "no
+   *  uncertainty information", never "no uncertainty": consumers must treat it
+   *  as unknown rather than as a point estimate they can trust.
+   *  See bootstrapMedianCI in src/lib/analysis/stats.ts. */
+  latencyCI?: Interval;
+  /** 20ms-bin counts of the intervals behind `latencyP50`. Lets a window be
+   *  pooled by summing distributions instead of averaging medians — see
+   *  src/lib/analysis/histogram.ts. Absent on pre-0007 rollups. */
+  latencyHist?: number[];
 };
 
 export type BigramStat = {
@@ -123,6 +187,17 @@ export type BigramStat = {
   errorRateCI: Interval;
   latencyP50: number;
   sameFinger: boolean;
+  /** Bootstrap confidence interval on `latencyP50`.
+   *
+   *  Optional because not every producer has the raw interval samples to
+   *  resample from — pooled rollups (see profile.ts) carry per-test
+   *  percentiles, not the underlying observations. Absent means "no
+   *  uncertainty information", never "no uncertainty": consumers must treat it
+   *  as unknown rather than as a point estimate they can trust.
+   *  See bootstrapMedianCI in src/lib/analysis/stats.ts. */
+  latencyCI?: Interval;
+  /** 20ms-bin counts of the intervals behind `latencyP50`. See KeyStat. */
+  latencyHist?: number[];
 };
 
 export type Finger =
@@ -135,8 +210,28 @@ export type FingerStat = {
   n: number;
   errorRate: number;
   latencyP50: number;
-  /** Ratio against the user's own overall median. >1 is slower than baseline. */
+  /** Ratio against the user's own overall median. >1 is slower than baseline.
+   *
+   *  CONFOUNDED. The interval this is built from belongs to the *transition*
+   *  into this finger, not to the finger itself, so a high value may mean
+   *  "the keys preceding this finger are far away" rather than "this finger is
+   *  slow". Kept because it is the number the dashboard has always shown and
+   *  because the gap between it and `relativeAdjusted` is itself informative —
+   *  but a finding should cite the adjusted figure. */
   relativeLatency: number;
+  /** Ratio against the same baseline, with the cost of the preceding finger
+   *  removed by the additive model in src/lib/analysis/residual.ts. Absent when
+   *  there were too few transitions to fit. */
+  relativeAdjusted?: number;
+  /** Bootstrap confidence interval on `latencyP50`.
+   *
+   *  Optional because not every producer has the raw interval samples to
+   *  resample from — pooled rollups (see profile.ts) carry per-test
+   *  percentiles, not the underlying observations. Absent means "no
+   *  uncertainty information", never "no uncertainty": consumers must treat it
+   *  as unknown rather than as a point estimate they can trust.
+   *  See bootstrapMedianCI in src/lib/analysis/stats.ts. */
+  latencyCI?: Interval;
 };
 
 export type ErrorClass =
@@ -168,6 +263,44 @@ export type MetricProfile = {
   sameFingerBigrams: BigramStat[];
   fatigue: { bucketSeconds: number; wpm: number[] };
   corrections: { backspaceRate: number; meanCharsToNotice: Measured<number> };
+  /** Rhythm across the window: robust spread of inter-key intervals plus how
+   *  often the typist bursts or stalls. Implemented since Phase 3 and never
+   *  surfaced until now — steadiness is a separate axis from speed. */
+  rhythm: { medianIki: number; coefficientOfVariation: number; burstRate: number; stallRate: number; n: number };
+  /** Dwell / flight / overlap, pooled. `available` is false for windows made
+   *  entirely of schema-version-1 tests, which carry no key releases. */
+  dynamics: { available: boolean; dwellP50: number; flightP50: number; overlapRate: number; n: number };
+  /** What the latency metrics had to discard. A window with a high discard
+   *  rate is weaker evidence than its sample size alone suggests. */
+  quality: { discardRate: number; distractedTests: number; testCount: number };
+  /** Per-character-class error rate and latency relative to lowercase.
+   *  ARCHITECTURE §5.4 called for this from the start; `KeyEvent.mods` carried
+   *  the data all along and nothing read it. */
+  charClasses: { charClass: string; n: number; errorRate: number; relativeToLowercase: number }[];
+  /** Shift chord isolated from the letters it produces. */
+  shift: { shiftedErrorRate: number; unshiftedErrorRate: number; n: number };
+  /** Bigram shapes and hand flow — the mechanical vocabulary beyond SFBs. */
+  geometry: {
+    shapes: { shape: string; n: number; errorRate: number; latencyP50: number }[];
+    alternationRate: number;
+    medianSameHandRun: number;
+    redirectRate: number;
+    n: number;
+  };
+  /** Confusions with a root cause attached, not just a pair of characters. */
+  classifiedConfusions: { intended: string; typed: string; count: number; cause: string }[];
+  /** What each weakness costs in words per minute — the impact ranking the
+   *  README promises, distinct from the error-rate ranking above. */
+  timeLoss: {
+    floorMs: number;
+    baselineWpm: number;
+    top: { bigram: string; n: number; excessMs: number; wpmCost: number }[];
+  };
+  /** True when every test pooled into this window shared one test config.
+   *  When false, `trend` mixes workloads: a punctuation run and a plain-words
+   *  run are different tasks, and a delta across them conflates a change in
+   *  skill with a change in what was typed. */
+  configMatched: boolean;
   trend: { wpmDelta: number; accuracyDelta: number; comparedToDays: number };
 };
 
@@ -193,6 +326,31 @@ export type PrescriptionTargetType =
 export type PrescriptionVerdict =
   | "resolved" | "improved" | "no-change" | "regressed";
 
+/** One measurement of a target set, at baseline or at outcome. */
+export type TargetMeasurement = { errorRate: number; latencyP50: number; n: number };
+
+/**
+ * The hold-out control set: same-type targets ranked immediately below the
+ * treated ones, deliberately never drilled and never shown to the user.
+ *
+ * It exists because a prescription's targets are chosen as *extremes* of a
+ * noisy estimate, so re-measuring them later shows improvement whether or not
+ * the drills did anything (regression to the mean). The control set was drawn
+ * from the same tail of the same distribution and receives no treatment, so
+ * whatever it does between baseline and outcome is what the treated set would
+ * have done anyway. The difference between the two is the part attributable
+ * to the prescription — see `lift` in src/lib/prescriptions/evaluate.ts.
+ *
+ * Null when no control could be formed (see control.ts): the prescription is
+ * still valid, its verdict is just uncontrolled and must say so.
+ */
+export type PrescriptionControl = {
+  targets: string[];
+  /** Captured at creation alongside the treated baseline, never updated. */
+  baseline: TargetMeasurement;
+  outcome: TargetMeasurement | null;
+};
+
 export type Prescription = {
   id: string;
   reportId: string | null;
@@ -200,8 +358,9 @@ export type Prescription = {
   targets: string[];
   drillConfig: DrillConfig;
   /** Captured at creation. Never updated — see docs/ARCHITECTURE.md §7. */
-  baseline: { errorRate: number; latencyP50: number; n: number };
-  outcome: { errorRate: number; latencyP50: number; n: number } | null;
+  baseline: TargetMeasurement;
+  outcome: TargetMeasurement | null;
+  control: PrescriptionControl | null;
   verdict: PrescriptionVerdict | null;
   status: "active" | "completed" | "abandoned";
   drillsTarget: number;

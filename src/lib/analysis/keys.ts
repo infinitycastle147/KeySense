@@ -4,7 +4,8 @@
  */
 
 import type { KeyEvent, KeyStat } from "@/lib/types";
-import { OUTLIER_MS, percentile, wilsonInterval } from "./stats";
+import { OUTLIER_MS, bootstrapMedianCI, percentile, wilsonInterval } from "./stats";
+import { buildHistogram } from "./histogram";
 
 type KeyAccumulator = {
   n: number;
@@ -59,6 +60,8 @@ export function computeKeyStats(events: KeyEvent[]): KeyStat[] {
       errorRateCI: wilsonInterval(acc.errors, acc.n),
       latencyP50: percentile(acc.latencies, 50),
       latencyP90: percentile(acc.latencies, 90),
+      latencyCI: bootstrapMedianCI(acc.latencies),
+      latencyHist: buildHistogram(acc.latencies),
     });
   }
 

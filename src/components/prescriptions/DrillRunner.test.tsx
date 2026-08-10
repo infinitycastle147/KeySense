@@ -24,6 +24,7 @@ function prescription(overrides: Partial<Prescription> = {}): Prescription {
     drillConfig: { wordCount: 1, targetRatio: 0.7, corpus: "english_5k" },
     baseline: { errorRate: 0.1, latencyP50: 200, n: 40 },
     outcome: null,
+    control: null,
     verdict: null,
     status: "active",
     drillsTarget: 5,

@@ -16,9 +16,14 @@ import path from "node:path";
 import { createClient } from "@/lib/db/supabase/server";
 import { computeTestAnalysis } from "@/lib/analysis/profile";
 import { parseLayout, type LayoutJson } from "@/lib/analysis/layout";
-import { getPrescription, incrementDrillsDone, completePrescription } from "@/lib/prescriptions/store";
+import {
+  getPrescription,
+  incrementDrillsDone,
+  completePrescription,
+  withControlOutcome,
+} from "@/lib/prescriptions/store";
 import { evaluate } from "@/lib/prescriptions/evaluate";
-import type { CompletedTest, KeyEvent } from "@/lib/types";
+import type { CompletedTest, KeyEvent, KeyUpEvent } from "@/lib/types";
 
 const layoutCache = new Map<string, LayoutJson>();
 
@@ -72,19 +77,29 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   const { data: eventRows, error: eventsError } = await supabase
     .from("test_events")
-    .select("test_id, events")
+    .select("test_id, events, words, keyups")
     .in("test_id", (tests ?? []).map((t) => t.id as string));
 
   if (eventsError) return NextResponse.json({ error: eventsError.message }, { status: 500 });
 
-  const eventsByTest = new Map<string, KeyEvent[]>(
-    (eventRows ?? []).map((r) => [r.test_id as string, r.events as KeyEvent[]]),
+  const archiveByTest = new Map<
+    string,
+    { events: KeyEvent[]; words: string[] | null; keyups: KeyUpEvent[] | null }
+  >(
+    (eventRows ?? []).map((r) => [
+      r.test_id as string,
+      {
+        events: r.events as KeyEvent[],
+        words: (r.words as string[] | null) ?? null,
+        keyups: (r.keyups as KeyUpEvent[] | null) ?? null,
+      },
+    ]),
   );
 
   const analyses = [];
   for (const row of tests ?? []) {
-    const events = eventsByTest.get(row.id as string);
-    if (!events) continue;
+    const archive = archiveByTest.get(row.id as string);
+    if (!archive) continue;
     const test: CompletedTest = {
       id: row.id as string,
       startedAt: row.started_at as string,
@@ -108,7 +123,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
         charsExtra: row.chars_extra as number,
         charsMissed: row.chars_missed as number,
       },
-      events,
+      events: archive.events,
+      words: archive.words ?? undefined,
+      keyups: archive.keyups ?? undefined,
       source: row.source,
       prescriptionId: (row.prescription_id as string | null) ?? null,
       deviceId: (row.device_id as string | null) ?? "",
@@ -139,10 +156,20 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
     result.outcome,
     result.verdict,
     new Date().toISOString(),
+    withControlOutcome(incremented.control, result.controlOutcome),
   );
   if (completeError || !completed) {
     return NextResponse.json({ error: completeError ?? "failed to complete prescription" }, { status: 500 });
   }
 
-  return NextResponse.json({ prescription: completed, evaluated: true, verdict: result.verdict });
+  // `controlled` and `lift` travel with the verdict, never separately: a
+  // verdict read without knowing which of the two rules produced it is the
+  // exact confusion this whole mechanism exists to prevent.
+  return NextResponse.json({
+    prescription: completed,
+    evaluated: true,
+    verdict: result.verdict,
+    controlled: result.controlled,
+    lift: result.lift,
+  });
 }

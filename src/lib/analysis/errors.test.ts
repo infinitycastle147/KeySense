@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { computeErrorTaxonomy, computeConfusionMatrix } from "./errors";
-import { charEvent } from "./test-utils";
+import {
+  computeErrorTaxonomy,
+  computeConfusionMatrix,
+  computeErrorTaxonomyAligned,
+  computeConfusionMatrixAligned,
+  classifyConfusion,
+  classifyConfusions,
+} from "./errors";
+import { charEvent, deleteEvent, loadLayoutIndex } from "./test-utils";
 import type { KeyEvent } from "@/lib/types";
 
 describe("computeErrorTaxonomy", () => {
@@ -164,5 +171,179 @@ describe("omission counting (integration with engine encoding)", () => {
       ev({ t: 100, key: " ", expected: " ", charIdx: 1 }),
     ];
     expect(computeErrorTaxonomy(events).omission).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Alignment-based classification
+// ---------------------------------------------------------------------------
+
+/** Types `typed` into word 0 of a one-word prompt, one char event per key,
+ *  exactly as the engine records it: `expected` is whatever sits at the same
+ *  position, which is the positional assumption under test. */
+function typeWord(word: string, typed: string): KeyEvent[] {
+  const events: KeyEvent[] = [];
+  for (let i = 0; i < typed.length; i++) {
+    events.push(
+      charEvent({
+        t: i * 100,
+        key: typed[i],
+        expected: i < word.length ? word[i] : "",
+        wordIdx: 0,
+        charIdx: i,
+      }),
+    );
+  }
+  return events;
+}
+
+describe("computeErrorTaxonomyAligned", () => {
+  it("scores a dropped character as one omission, where the positional read invents a substitution", () => {
+    const events = typeWord("hello", "helo");
+
+    // What the positional classifier sees: `o` landed where `l` was expected.
+    expect(computeErrorTaxonomy(events)).toMatchObject({ substitution: 1, omission: 0 });
+
+    // What actually happened.
+    expect(computeErrorTaxonomyAligned(events, ["hello"])).toEqual({
+      substitution: 0,
+      insertion: 0,
+      omission: 1,
+      transposition: 0,
+    });
+  });
+
+  it("does not let one dropped character cascade through a long word", () => {
+    const events = typeWord("keyboard", "kyboard");
+    const aligned = computeErrorTaxonomyAligned(events, ["keyboard"]);
+    expect(aligned.omission).toBe(1);
+    expect(aligned.substitution).toBe(0);
+  });
+
+  it("still counts a genuine wrong key as a substitution", () => {
+    const events = typeWord("cat", "cst");
+    expect(computeErrorTaxonomyAligned(events, ["cat"])).toMatchObject({
+      substitution: 1,
+      omission: 0,
+      insertion: 0,
+    });
+  });
+
+  it("counts an extra character as an insertion", () => {
+    const events = typeWord("cat", "caat");
+    expect(computeErrorTaxonomyAligned(events, ["cat"])).toMatchObject({
+      insertion: 1,
+      substitution: 0,
+      omission: 0,
+    });
+  });
+
+  it("still detects transpositions, and does not double-count them as substitutions", () => {
+    const events = typeWord("the", "hte");
+    expect(computeErrorTaxonomyAligned(events, ["the"])).toMatchObject({
+      transposition: 1,
+      substitution: 0,
+    });
+  });
+
+  it("counts a word skipped with a bare space as a full omission", () => {
+    const events = [charEvent({ t: 0, key: " ", expected: " ", wordIdx: 0, charIdx: 0, missed: 3 })];
+    expect(computeErrorTaxonomyAligned(events, ["cat"])).toMatchObject({ omission: 3 });
+  });
+
+  it("ignores words the test never reached", () => {
+    const events = typeWord("cat", "cat");
+    // "dog" was never attempted — not typed, not skipped. It is not an omission.
+    expect(computeErrorTaxonomyAligned(events, ["cat", "dog"])).toEqual({
+      substitution: 0,
+      insertion: 0,
+      omission: 0,
+      transposition: 0,
+    });
+  });
+
+  it("measures the corrected word, not the abandoned attempt", () => {
+    const events = [
+      ...typeWord("cat", "cs"),
+      deleteEvent({ t: 300, wordIdx: 0, charIdx: 1 }),
+      charEvent({ t: 400, key: "a", expected: "a", wordIdx: 0, charIdx: 1 }),
+      charEvent({ t: 500, key: "t", expected: "t", wordIdx: 0, charIdx: 2 }),
+    ];
+    expect(computeErrorTaxonomyAligned(events, ["cat"])).toEqual({
+      substitution: 0,
+      insertion: 0,
+      omission: 0,
+      transposition: 0,
+    });
+  });
+
+  it("returns all-zero counts for an empty stream", () => {
+    expect(computeErrorTaxonomyAligned([], ["cat"])).toEqual({
+      substitution: 0,
+      insertion: 0,
+      omission: 0,
+      transposition: 0,
+    });
+  });
+});
+
+describe("computeConfusionMatrixAligned", () => {
+  it("does not fabricate a confusion pair out of a dropped character", () => {
+    const events = typeWord("hello", "helo");
+    // The positional matrix claims the typist confuses `l` with `o`.
+    expect(computeConfusionMatrix(events)).toEqual({ l: { o: 1 } });
+    // They did no such thing — they dropped a letter.
+    expect(computeConfusionMatrixAligned(events, ["hello"])).toEqual({});
+  });
+
+  it("records a real confusion", () => {
+    const events = typeWord("cat", "cst");
+    expect(computeConfusionMatrixAligned(events, ["cat"])).toEqual({ a: { s: 1 } });
+  });
+
+  it("accumulates repeated confusions of the same pair across words", () => {
+    const events = [...typeWord("cat", "cst"), ...typeWord("bat", "bst").map((e) => ({ ...e, wordIdx: 1 }))];
+    expect(computeConfusionMatrixAligned(events, ["cat", "bat"])).toEqual({ a: { s: 2 } });
+  });
+
+  it("excludes insertions and omissions, which have no intended/typed pair", () => {
+    expect(computeConfusionMatrixAligned(typeWord("cat", "caat"), ["cat"])).toEqual({});
+    expect(computeConfusionMatrixAligned(typeWord("cat", "ct"), ["cat"])).toEqual({});
+  });
+});
+
+describe("classifyConfusion — the root cause ARCHITECTURE §5.4 promised", () => {
+  const qwerty = loadLayoutIndex("qwerty");
+
+  it("calls a neighbouring key a spatial slip", () => {
+    expect(classifyConfusion(qwerty, "a", "s")).toBe("spatial-slip");
+  });
+
+  it("calls two keys owned by one finger a same-finger confusion", () => {
+    // Not a miss — the finger went to its own column and picked the wrong row.
+    expect(classifyConfusion(qwerty, "e", "d")).toBe("same-finger");
+  });
+
+  it("calls a distant same-hand key a row jump", () => {
+    expect(classifyConfusion(qwerty, "q", "c")).toBe("row-jump");
+  });
+
+  it("calls the wrong hand a sequencing failure, not an aiming one", () => {
+    expect(classifyConfusion(qwerty, "a", "l")).toBe("cross-hand");
+  });
+
+  it("admits when the geometry explains nothing", () => {
+    expect(classifyConfusion(qwerty, "a", "é")).toBe("unrelated");
+  });
+
+  it("ranks classified confusions by count", () => {
+    const rows = classifyConfusions({ a: { s: 12, l: 3 }, e: { d: 7 } }, qwerty);
+    expect(rows.map((r) => r.count)).toEqual([12, 7, 3]);
+    expect(rows[0]).toMatchObject({ intended: "a", typed: "s", cause: "spatial-slip" });
+    expect(rows[2]).toMatchObject({ intended: "a", typed: "l", cause: "cross-hand" });
+  });
+
+  it("respects topN", () => {
+    expect(classifyConfusions({ a: { s: 12, l: 3 }, e: { d: 7 } }, qwerty, 2)).toHaveLength(2);
   });
 });
