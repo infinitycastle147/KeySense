@@ -37,7 +37,7 @@ describe("hallucination guard", () => {
     const result = validateReport(hallucinatingFixture, allowed);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toContain("hallucinated");
+      expect(result.reason).toContain("absent from the profile");
       expect(result.rejectedFindings?.length).toBeGreaterThan(0);
     }
   });
@@ -198,6 +198,64 @@ describe("summary hallucination guard", () => {
         findings: [validFinding()],
       },
       withTrend,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("target guard", () => {
+  // A finding is a promise a drill can be built from it. The live model, given
+  // a window where no bigram was significant, emitted targetType "sfb" with
+  // the geometry shape name "same-finger" — schema-valid, unprescribable, and
+  // offered to the user as a button that could only ever 422.
+  const validTargets = { bigram: ["ol", "ju"], sfb: ["ol"], key: [";"], finger: ["r-pinky"], class: ["substitution"] };
+
+  it("rejects a geometry shape name used as an sfb target", () => {
+    const result = validateReport(
+      {
+        summary: "One finding.",
+        findings: [validFinding({ targetType: "sfb", targets: ["same-finger"] })],
+      },
+      allowed,
+      validTargets,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.rejectedFindings?.[0]).toContain("same-finger");
+  });
+
+  it("rejects a real bigram that is not in the profile's bigram list", () => {
+    // " t" is a genuine bigram and appears in timeLoss.top, but the baseline
+    // extractor only resolves against worstBigrams — so it cannot be drilled.
+    const result = validateReport(
+      { summary: "One finding.", findings: [validFinding({ targetType: "bigram", targets: [" t"] })] },
+      allowed,
+      validTargets,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a bigram that is real but not same-finger when the type is sfb", () => {
+    const result = validateReport(
+      { summary: "One finding.", findings: [validFinding({ targetType: "sfb", targets: ["ju"] })] },
+      allowed,
+      validTargets,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("accepts targets drawn from the matching list", () => {
+    const result = validateReport(
+      { summary: "One finding.", findings: [validFinding({ targetType: "finger", targets: ["r-pinky"] })] },
+      allowed,
+      validTargets,
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("skips the check entirely when no target list is supplied", () => {
+    const result = validateReport(
+      { summary: "One finding.", findings: [validFinding({ targetType: "sfb", targets: ["anything"] })] },
+      allowed,
     );
     expect(result.ok).toBe(true);
   });

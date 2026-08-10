@@ -246,6 +246,17 @@ export type ErrorTaxonomy = Record<ErrorClass, number>;
 export type ConfusionMatrix = Record<string, Record<string, number>>;
 
 /** The compact profile handed to the LLM. Never contains raw events. */
+/**
+ * A ranked row carrying the multiple-comparison verdict alongside the numbers.
+ *
+ * `significant` means the row cleared the Benjamini-Hochberg gate for this
+ * window — it is a property of the row *in this window*, not a property of the
+ * bigram, and the same bigram will flip between windows as evidence arrives.
+ * Treat it as "this is a discovery", never as "this is the bad one".
+ */
+export type RankedBigram = BigramStat & { significant: boolean };
+export type RankedKey = KeyStat & { significant: boolean };
+
 export type MetricProfile = {
   windowStart: string;
   windowEnd: string;
@@ -262,13 +273,14 @@ export type MetricProfile = {
   worstBigrams: BigramStat[];
   worstKeys: KeyStat[];
   /** The same ranking with the gate reported rather than applied — every row
-   *  at n >= MIN_FINDING_N, worst first. Display surfaces read these: a
-   *  dashboard's job is to show the ordered field with its uncertainty, not to
-   *  go blank because nothing rose to the level of a discovery
-   *  (src/lib/analysis/ranking.ts, "attached, not applied"). Never feed these
-   *  to the model or to prescription creation. */
-  bigramStats: BigramStat[];
-  keyStats: KeyStat[];
+   *  at n >= MIN_FINDING_N, worst first, each carrying its own verdict
+   *  (src/lib/analysis/ranking.ts, "attached, not applied"). Display surfaces
+   *  and the model read these: going blank, or sending the model nothing,
+   *  because no row rose to the level of a discovery loses the ordered field
+   *  that was measured. A consumer that must act only on discoveries filters
+   *  on `significant` itself. */
+  bigramStats: RankedBigram[];
+  keyStats: RankedKey[];
   fingers: FingerStat[];
   errorTaxonomy: ErrorTaxonomy;
   topConfusions: { intended: string; typed: string; count: number }[];

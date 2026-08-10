@@ -1,11 +1,36 @@
 import { describe, it, expect } from "vitest";
-import { buildCompactProfile, collectAllowedNumbers } from "./profile-input";
+import {
+  buildCompactProfile,
+  collectAllowedNumbers,
+  collectValidTargets,
+  collectAllTargets,
+} from "./profile-input";
 import { MAX_PROFILE_BYTES } from "./model";
 import type { MetricProfile } from "@/lib/types";
 
 function measured(value: number, n: number, reportable = true) {
   return { value, n, reportable };
 }
+
+const OL = {
+  bigram: "ol",
+  n: 340,
+  errors: 29,
+  errorRate: 0.084,
+  errorRateCI: { low: 0.06, high: 0.12 },
+  latencyP50: 211,
+  sameFinger: true,
+};
+
+const SEMI = {
+  key: ";",
+  n: 120,
+  errors: 9,
+  errorRate: 0.075,
+  errorRateCI: { low: 0.04, high: 0.14 },
+  latencyP50: 198,
+  latencyP90: 320,
+};
 
 function profile(over: Partial<MetricProfile> = {}): MetricProfile {
   return {
@@ -17,16 +42,13 @@ function profile(over: Partial<MetricProfile> = {}): MetricProfile {
       accuracy: measured(96.1, 42),
       consistency: measured(78.5, 42),
     },
-    worstBigrams: [
-      {
-        bigram: "ol",
-        n: 340,
-        errors: 29,
-        errorRate: 0.084,
-        errorRateCI: { low: 0.06, high: 0.12 },
-        latencyP50: 211,
-        sameFinger: true,
-      },
+    // The model reads the ranked lists (bigramStats/keyStats), not the
+    // discovery subset — see CompactProfile.worstBigrams. worstBigrams here is
+    // the subset that cleared the gate, as it is in a real profile.
+    worstBigrams: [OL],
+    worstKeys: [SEMI],
+    bigramStats: [
+      { ...OL, significant: true },
       {
         bigram: "ju",
         n: 12, // below threshold — must be dropped
@@ -35,23 +57,10 @@ function profile(over: Partial<MetricProfile> = {}): MetricProfile {
         errorRateCI: { low: 0.1, high: 0.65 },
         latencyP50: 260,
         sameFinger: false,
+        significant: false,
       },
     ],
-    worstKeys: [
-      {
-        key: ";",
-        n: 120,
-        errors: 9,
-        errorRate: 0.075,
-        errorRateCI: { low: 0.04, high: 0.14 },
-        latencyP50: 198,
-        latencyP90: 320,
-      },
-    ],
-    // Not read by buildCompactProfile — the model only ever sees discoveries.
-    // Present so the fixture is a valid MetricProfile.
-    bigramStats: [],
-    keyStats: [],
+    keyStats: [{ ...SEMI, significant: true }],
     fingers: [
       { finger: "r-pinky", n: 340, errorRate: 0.084, latencyP50: 211, relativeLatency: 2.13 },
     ],
@@ -124,7 +133,7 @@ describe("buildCompactProfile", () => {
 
   it("handles an empty profile without throwing", () => {
     const compact = buildCompactProfile(
-      profile({ worstBigrams: [], worstKeys: [], fingers: [], topConfusions: [] }),
+      profile({ bigramStats: [], keyStats: [], worstBigrams: [], worstKeys: [], fingers: [], topConfusions: [] }),
       30,
     );
     expect(compact.worstBigrams).toEqual([]);
@@ -147,3 +156,41 @@ describe("collectAllowedNumbers", () => {
     expect(allowed).not.toContain(0.33); // the dropped n=12 bigram
   });
 });
+
+describe("collectValidTargets", () => {
+  // The contract: a target the model may name is exactly a target a
+  // prescription can baseline. When these came apart, the model wrote findings
+  // the UI offered a "prescribe drill" button for and the API could only 422.
+  it("offers exactly what extractFromCompactProfile can resolve", () => {
+    const compact = buildCompactProfile(profile(), 30);
+    const targets = collectValidTargets(compact);
+    expect(targets.bigram).toEqual(compact.worstBigrams.map((b) => b.bigram));
+    expect(targets.key).toEqual(compact.worstKeys.map((k) => k.key));
+    expect(targets.finger).toEqual(compact.fingers.map((f) => f.finger));
+    expect(targets.class).toEqual(compact.errorTaxonomy.map((e) => e.class));
+  });
+
+  it("narrows sfb to same-finger bigrams, so type and target agree", () => {
+    const compact = buildCompactProfile(profile(), 30);
+    for (const b of targetsOf(compact, "sfb")) {
+      expect(compact.worstBigrams.find((x) => x.bigram === b)?.sameFinger).toBe(true);
+    }
+  });
+
+  it("never offers a geometry shape name — the bug that started this", () => {
+    const compact = buildCompactProfile(profile(), 30);
+    const all = collectAllTargets(compact);
+    for (const shape of ["same-finger", "scissor", "lateral-stretch", "alternation"]) {
+      expect(all).not.toContain(shape);
+    }
+  });
+
+  it("flattens to a deduplicated union for the schema enum", () => {
+    const all = collectAllTargets(buildCompactProfile(profile(), 30));
+    expect(new Set(all).size).toBe(all.length);
+  });
+});
+
+function targetsOf(compact: Parameters<typeof collectValidTargets>[0], type: string): string[] {
+  return collectValidTargets(compact)[type] ?? [];
+}

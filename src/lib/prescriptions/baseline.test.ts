@@ -105,8 +105,8 @@ describe("extractFromCompactProfile", () => {
   it("aggregates n and errors exactly across multiple target bigrams", () => {
     const compact = compactProfile({
       worstBigrams: [
-        { bigram: "ol", errorRate: 0.1, latencyP50: 200, n: 20, sameFinger: true },
-        { bigram: "ju", errorRate: 0.2, latencyP50: 300, n: 20, sameFinger: true },
+        { bigram: "ol", errorRate: 0.1, latencyP50: 200, n: 20, sameFinger: true, significant: true },
+        { bigram: "ju", errorRate: 0.2, latencyP50: 300, n: 20, sameFinger: true, significant: true },
       ],
     });
     const stat = extractFromCompactProfile(compact, "sfb", ["ol", "ju"]);
@@ -118,7 +118,7 @@ describe("extractFromCompactProfile", () => {
 
   it("marks a target below MIN_FINDING_N as not reportable", () => {
     const compact = compactProfile({
-      worstBigrams: [{ bigram: "th", errorRate: 0.1, latencyP50: 200, n: 10, sameFinger: false }],
+      worstBigrams: [{ bigram: "th", errorRate: 0.1, latencyP50: 200, n: 10, sameFinger: false, significant: false }],
     });
     const stat = extractFromCompactProfile(compact, "bigram", ["th"]);
     expect(stat.n).toBe(10);

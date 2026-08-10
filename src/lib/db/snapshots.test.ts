@@ -10,6 +10,7 @@ const OL = {
   errorRateCI: { low: 0.06, high: 0.12 },
   latencyP50: 211,
   sameFinger: true,
+  significant: true,
 };
 
 function profile(over: Partial<MetricProfile> = {}): MetricProfile {

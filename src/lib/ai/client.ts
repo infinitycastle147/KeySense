@@ -15,7 +15,12 @@ import "server-only";
 import { GoogleGenAI } from "@google/genai";
 import { MAX_PROFILE_BYTES, PROMPT_VERSION, REPORT_MODEL } from "./model";
 import { buildUserMessage, SYSTEM_PROMPT } from "./prompt";
-import { collectAllowedNumbers, type CompactProfile } from "./profile-input";
+import {
+  collectAllowedNumbers,
+  collectAllTargets,
+  collectValidTargets,
+  type CompactProfile,
+} from "./profile-input";
 import { validateReport } from "./parse";
 import { withRetry } from "./retry";
 import { fixtureReport } from "./fixtures/report";
@@ -89,7 +94,7 @@ export async function generateReport(
         systemInstruction: SYSTEM_PROMPT,
         // Both are required together: a schema without the mime type is ignored.
         responseMimeType: "application/json",
-        responseJsonSchema: reportJsonSchema,
+        responseJsonSchema: buildReportSchema(collectAllTargets(compact)),
         // Thinking tokens are drawn from this same budget, so it has to cover the
         // reasoning as well as the report. Too low and generation stops mid-JSON
         // with finishReason MAX_TOKENS, which reads downstream as a parse error
@@ -110,7 +115,11 @@ export async function generateReport(
     throw new Error("model returned no content");
   }
 
-  const validation = validateReport(JSON.parse(content), allowed);
+  const validation = validateReport(
+    JSON.parse(content),
+    allowed,
+    collectValidTargets(compact),
+  );
   if (!validation.ok) {
     // Never fall back to fixtures here — a live call that produced bad output
     // is a real failure and must be visible, not papered over.
@@ -135,9 +144,15 @@ export async function generateReport(
  * would still catch them, but rejecting a whole report after paying for it is a
  * worse outcome than constraining generation up front.
  *
- * Accepted as-is by gemini-3.6-flash on the first live call.
+ * Built per request rather than held as a constant so `targets` can be an enum
+ * of this window's real targets. That is the same argument one level down: the
+ * model cannot name a target that does not exist if the decoder will not let it
+ * spell one, which turns a rejected report — a call paid for and thrown away —
+ * into an impossibility. parse.ts still checks, since the enum cannot express
+ * "this target belongs to that target type".
  */
-const reportJsonSchema = {
+function buildReportSchema(targets: string[]) {
+  return {
   type: "object",
   additionalProperties: false,
   required: ["summary", "findings"],
@@ -171,9 +186,17 @@ const reportJsonSchema = {
             type: "string",
             enum: ["bigram", "key", "finger", "sfb", "class"],
           },
-          targets: { type: "array", items: { type: "string" } },
+          // Empty enums are invalid JSON Schema, and a window with no
+          // targets at all should not have reached a model call — but fall
+          // back to a free string rather than emitting a schema the API will
+          // reject outright.
+          targets:
+            targets.length > 0
+              ? { type: "array", items: { type: "string", enum: targets } }
+              : { type: "array", items: { type: "string" } },
         },
       },
     },
   },
-} as const;
+  };
+}

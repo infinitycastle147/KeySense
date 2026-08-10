@@ -13,7 +13,12 @@
  * model given a shaky number will find a way to use it.
  */
 
-import type { MetricProfile, BigramStat, KeyStat, FingerStat } from "@/lib/types";
+import type {
+  MetricProfile,
+  RankedBigram,
+  RankedKey,
+  FingerStat,
+} from "@/lib/types";
 
 /** One measurement as the model sees it: a value, its units, and its n. */
 export type ProfileNumber = {
@@ -28,14 +33,28 @@ export type CompactProfile = {
   windowEnd: string;
   testCount: number;
   overall: ProfileNumber[];
+  /** The ranked field, worst first — not only the discoveries. Each row
+   *  carries `significant`: true means it cleared the multiple-comparison gate
+   *  for this window. Sending discoveries alone starved the model of the
+   *  highest-value signal it has (per-bigram) on every window where nothing
+   *  cleared the gate, and it improvised findings out of whatever was left.
+   *  The prompt tells it to lead with the significant rows and temper the
+   *  rest; the gate is reported, not applied. */
   worstBigrams: {
     bigram: string;
     errorRate: number;
     latencyP50: number;
     n: number;
     sameFinger: boolean;
+    significant: boolean;
   }[];
-  worstKeys: { key: string; errorRate: number; latencyP50: number; n: number }[];
+  worstKeys: {
+    key: string;
+    errorRate: number;
+    latencyP50: number;
+    n: number;
+    significant: boolean;
+  }[];
   fingers: {
     finger: string;
     relativeLatency: number;
@@ -87,11 +106,50 @@ const TOP_BIGRAMS = 20;
 const TOP_KEYS = 10;
 const TOP_CONFUSIONS = 10;
 
+/**
+ * Decimal places kept on every number in the payload.
+ *
+ * A pooled rate arrives as 0.09411764705882353 — eighteen characters of which
+ * the model can use four. The tail is not information: findings are written to
+ * display precision, and parse.ts already accepts a 2% relative difference
+ * between a cited figure and the profile, which is orders of magnitude looser
+ * than this. Measured on a real 19-test window, rounding took the payload from
+ * 8813 to 7621 bytes — ~14% off the input tokens of every report, for no loss
+ * of meaning, and back under the ProfileTooLargeError ceiling that widening the
+ * bigram list had pushed it past.
+ *
+ * Applied to the finished object rather than at each call site so a field
+ * added later cannot forget it.
+ */
+const PAYLOAD_DECIMALS = 4;
+
+function roundDeep<T>(value: T): T {
+  if (typeof value === "number") {
+    return (Number.isFinite(value)
+      ? Number(value.toFixed(PAYLOAD_DECIMALS))
+      : value) as unknown as T;
+  }
+  if (Array.isArray(value)) return value.map(roundDeep) as unknown as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, roundDeep(v)]),
+    ) as T;
+  }
+  return value;
+}
+
 function reportable<T extends { n: number }>(rows: T[], minN: number): T[] {
   return rows.filter((r) => r.n >= minN);
 }
 
 export function buildCompactProfile(
+  profile: MetricProfile,
+  minN: number,
+): CompactProfile {
+  return roundDeep(buildRawCompactProfile(profile, minN));
+}
+
+function buildRawCompactProfile(
   profile: MetricProfile,
   minN: number,
 ): CompactProfile {
@@ -112,7 +170,7 @@ export function buildCompactProfile(
     windowEnd: profile.windowEnd,
     testCount: profile.testCount,
     overall,
-    worstBigrams: reportable<BigramStat>(profile.worstBigrams, minN)
+    worstBigrams: reportable<RankedBigram>(profile.bigramStats, minN)
       .slice(0, TOP_BIGRAMS)
       .map((b) => ({
         bigram: b.bigram,
@@ -120,14 +178,16 @@ export function buildCompactProfile(
         latencyP50: b.latencyP50,
         n: b.n,
         sameFinger: b.sameFinger,
+        significant: b.significant,
       })),
-    worstKeys: reportable<KeyStat>(profile.worstKeys, minN)
+    worstKeys: reportable<RankedKey>(profile.keyStats, minN)
       .slice(0, TOP_KEYS)
       .map((k) => ({
         key: k.key,
         errorRate: k.errorRate,
         latencyP50: k.latencyP50,
         n: k.n,
+        significant: k.significant,
       })),
     fingers: reportable<FingerStat>(profile.fingers, minN).map((f) => ({
       finger: f.finger,
@@ -195,4 +255,37 @@ export function collectAllowedNumbers(
   walk(compact);
   if (extra !== undefined) walk(extra);
   return out;
+}
+
+/**
+ * Every target the model may name, keyed by target type.
+ *
+ * Deliberately defined as *what a prescription can baseline*, not as
+ * "everything mentioned in the profile" — the two came apart and produced a
+ * report whose findings could not be acted on. `extractFromCompactProfile`
+ * resolves a bigram against `worstBigrams`, a key against `worstKeys`, and so
+ * on; anything outside those lists yields n=0 and a 422 at prescribe time.
+ *
+ * The specific failure this closes: given a window where no bigram cleared the
+ * significance gate, the model reached into `geometry.shapes` and emitted the
+ * shape name "same-finger" as an sfb target, and reached into `timeLoss.top`
+ * for bigrams absent from `worstBigrams`. Both produced findings the UI offered
+ * a "prescribe drill" button for and the API could only reject.
+ */
+export function collectValidTargets(compact: CompactProfile): Record<string, string[]> {
+  const bigrams = compact.worstBigrams.map((b) => b.bigram);
+  return {
+    bigram: bigrams,
+    // An SFB is a bigram, not a shape name. Narrowed to the same-finger subset
+    // so the target type and the target agree.
+    sfb: compact.worstBigrams.filter((b) => b.sameFinger).map((b) => b.bigram),
+    key: compact.worstKeys.map((k) => k.key),
+    finger: compact.fingers.map((f) => f.finger),
+    class: compact.errorTaxonomy.map((e) => e.class),
+  };
+}
+
+/** The flat union, for constraining generation up front (see client.ts). */
+export function collectAllTargets(compact: CompactProfile): string[] {
+  return [...new Set(Object.values(collectValidTargets(compact)).flat())];
 }

@@ -66,7 +66,11 @@ function isCitable(value: number, allowed: number[]): boolean {
  * @param allowed Every number from the compact profile
  *                (`collectAllowedNumbers`).
  */
-export function validateReport(raw: unknown, allowed: number[]): ValidationResult {
+export function validateReport(
+  raw: unknown,
+  allowed: number[],
+  validTargets?: Record<string, string[]>,
+): ValidationResult {
   const parsed = reportSchema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, reason: `schema: ${parsed.error.issues[0]?.message ?? "invalid"}` };
@@ -91,6 +95,22 @@ export function validateReport(raw: unknown, allowed: number[]): ValidationResul
   }
 
   for (const finding of parsed.data.findings) {
+    // A finding is a promise that a drill can be built from it. A target the
+    // baseline extractor cannot resolve breaks that promise at the point the
+    // user clicks "prescribe drill" — too late, and indistinguishable from a
+    // bug. Checked here so it fails while the report is still being validated.
+    if (validTargets) {
+      const permitted = validTargets[finding.targetType] ?? [];
+      const lookup = new Set(permitted.map((t) => t.toLowerCase()));
+      for (const target of finding.targets) {
+        if (!lookup.has(target.toLowerCase())) {
+          rejected.push(
+            `${finding.id}: ${finding.targetType} target ${JSON.stringify(target)} is not in the profile`,
+          );
+        }
+      }
+    }
+
     for (const ev of finding.evidence) {
       // The sample size must be one the profile actually reported.
       if (!isCitable(ev.n, allowed)) {
@@ -108,7 +128,7 @@ export function validateReport(raw: unknown, allowed: number[]): ValidationResul
   if (rejected.length > 0) {
     return {
       ok: false,
-      reason: "hallucinated figures in evidence",
+      reason: "findings cite figures or targets absent from the profile",
       rejectedFindings: rejected,
     };
   }

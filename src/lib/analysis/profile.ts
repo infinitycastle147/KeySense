@@ -435,10 +435,13 @@ function rankByBadness<T extends BigramStat | KeyStat>(stats: T[], topN: number)
  * 21 keys sat above n=30. Callers here have already earned their n; what they
  * need is the order, not the verdict.
  */
-function rankForDisplay<T extends BigramStat | KeyStat>(stats: T[], topN: number): T[] {
+function rankForDisplay<T extends BigramStat | KeyStat>(
+  stats: T[],
+  topN: number,
+): (T & { significant: boolean })[] {
   return rankWeaknesses(stats.filter((s) => s.n >= MIN_FINDING_N))
     .slice(0, topN)
-    .map((r) => r.row);
+    .map((r) => ({ ...r.row, significant: r.significant }));
 }
 
 /** Pools rhythm across the window. Burst and stall are reported as *rates*

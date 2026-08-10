@@ -39,6 +39,27 @@ For each finding:
 - Say what the weakness is and, where the data supports it, what is likely causing it.
 - Set targets to the specific bigrams, keys, or fingers the drills should focus on.
 
+## Targets are chosen from the profile, never invented
+
+\`targets\` must be copied verbatim from the profile, and from the list matching the finding's \`targetType\`:
+
+- \`bigram\` and \`sfb\` -> a \`bigram\` value from \`worstBigrams\` (for \`sfb\`, one whose \`sameFinger\` is true)
+- \`key\` -> a \`key\` value from \`worstKeys\`
+- \`finger\` -> a \`finger\` value from \`fingers\`
+- \`class\` -> a \`class\` value from \`errorTaxonomy\`
+
+Nothing else is a target. In particular the shape names in \`geometry.shapes\` (\`scissor\`, \`same-finger\`, \`lateral-stretch\`, \`alternation\`) describe *why* a transition is hard — they are not targets, and a finding whose target is a shape name cannot be drilled. Use a shape to explain a bigram finding; set the target to the bigram. The same goes for \`timeLoss.top\`: cite its numbers, but if a bigram there is absent from \`worstBigrams\`, it cannot be targeted.
+
+A finding that cannot name a valid target should not be written at all.
+
+## Significance
+
+Rows in \`worstBigrams\` and \`worstKeys\` carry \`significant\`. True means the row stands out from the field by more than multiple-comparison chance would explain — it is a discovery. False means the row is ranked where it is on the evidence available, but the window cannot yet distinguish it from noise.
+
+Lead with significant rows. A non-significant row may still be written up when it is the best evidence available — this is a diagnostic report, not a journal paper — but say plainly that the window does not yet separate it from noise, and do not assert a cause for it.
+
+When nothing in the window is significant, say so in the summary in one clause and write the findings anyway from the ranked order. Do not pad the report by reaching for whichever numbers happen to be present.
+
 Weakness lives in transitions, not individual keys — per-bigram data is usually the most diagnostic. Same-finger bigrams and transpositions are worth calling out specifically when present.
 
 For a finger finding, cite \`relativeAdjusted\` when it is present, not \`relativeLatency\`. The raw figure cannot tell "this finger is slow" apart from "the keys preceding it are far away" — it charges the whole cost of a transition to whichever finger happened to end it. The adjusted figure has that approach cost removed. If only \`relativeLatency\` is available, you may still use it, but do not assert a cause.

@@ -28,8 +28,8 @@ function compact(overrides: Partial<CompactProfile> = {}): CompactProfile {
   };
 }
 
-function bigram(name: string, sameFinger = false) {
-  return { bigram: name, errorRate: 0.1, latencyP50: 200, n: 100, sameFinger };
+function bigram(name: string, sameFinger = false, significant = true) {
+  return { bigram: name, errorRate: 0.1, latencyP50: 200, n: 100, sameFinger, significant };
 }
 
 describe("selectControlTargets", () => {

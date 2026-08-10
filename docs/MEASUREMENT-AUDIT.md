@@ -228,6 +228,14 @@ practice hours is picking the wrong targets — and the headline promise is unba
 
 1. ~~Hold-out control targets + difference-in-differences.~~ **Done** — `prescriptions/control.ts`, `evaluate.ts` (`lift`, `controlled`), `prescriptions/scorecard.ts`, migration `0004`.
 2. ~~Shrinkage + FDR before ranking.~~ **Done** — `analysis/ranking.ts`; `rankByBadness` now delegates to it.
+   *Follow-up (2026-08-10):* applying the FDR gate to every consumer was too
+   blunt. On a window where nothing cleared it, the dashboard rendered an empty
+   keyboard and the model received a profile with no bigrams or keys at all —
+   then improvised findings from `geometry.shapes` and `timeLoss`, producing
+   targets no prescription could baseline. The gate is now *reported* rather
+   than applied: `MetricProfile` carries `bigramStats`/`keyStats` with a
+   `significant` flag per row, and the discovery-only lists remain for the
+   prescription flow. See `analysis/profile.ts` (`rankForDisplay`).
 3. ~~Edit-distance alignment before error classification.~~ **Done** — `analysis/align.ts`, `errors.ts` (`*Aligned`), `test_events.words` via migration `0005`.
 4. ~~Bootstrap CIs on median latency.~~ **Done** — `stats.ts` (`bootstrapMedianCI`, deterministically seeded), carried on `KeyStat`/`BigramStat`/`FingerStat`.
 5. ~~Confound-adjusted finger latency.~~ **Done** — `analysis/residual.ts`; `relativeAdjusted` is what the prompt now instructs the model to cite.

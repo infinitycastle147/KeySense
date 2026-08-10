@@ -38,6 +38,10 @@ export function ReportView() {
   // prescription with one click. Keyed by finding id so each card tracks its
   // own request/result independently.
   const [prescribing, setPrescribing] = useState<Record<string, "pending" | "done" | "error">>({});
+  // The server explains precisely why a prescription was refused ("only n=0
+  // observations, below MIN_FINDING_N"). Discarding that and showing a generic
+  // failure turned a legible refusal into an apparent bug.
+  const [prescribeError, setPrescribeError] = useState<Record<string, string>>({});
 
   async function prescribe(findingId: string) {
     if (!report) return;
@@ -48,8 +52,17 @@ export function ReportView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reportId: report.id, findingId }),
       });
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        const reason = (body as ErrorResponse | null)?.error;
+        setPrescribeError((prev) => ({
+          ...prev,
+          [findingId]: reason ?? `request failed (${res.status})`,
+        }));
+      }
       setPrescribing((prev) => ({ ...prev, [findingId]: res.ok ? "done" : "error" }));
     } catch {
+      setPrescribeError((prev) => ({ ...prev, [findingId]: "could not reach the server" }));
       setPrescribing((prev) => ({ ...prev, [findingId]: "error" }));
     }
   }
@@ -157,7 +170,9 @@ export function ReportView() {
                     {prescribing[finding.id] === "done" ? "prescribed" : "prescribe drill"}
                   </Button>
                   {prescribing[finding.id] === "error" && (
-                    <span className="label-type text-flag">could not create prescription</span>
+                    <span className="text-sm text-flag">
+                      {prescribeError[finding.id] ?? "could not create prescription"}
+                    </span>
                   )}
                 </div>
               </section>
