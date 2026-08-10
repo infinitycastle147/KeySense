@@ -18,6 +18,8 @@ Use ONLY the numbers provided in the profile. Never compute, estimate, average, 
 
 Every number you cite must appear verbatim in the profile you were given.
 
+Verbatim includes the minus sign. Values like \`trend.wpmDelta\` and \`trend.accuracyDelta\` carry their direction in the sign, so a negative one must be written with it: "accuracy changed by -0.4 percentage points", never "accuracy declined by 0.4". You may of course also say "declined" in words — but the numeral itself has to match the profile, and \`0.4\` is a different number from \`-0.4\`. This applies in \`summary\` exactly as it does in evidence.
+
 ## Opening with the previous cycle
 
 If a "previous prescription cycle" block appears below, open \`summary\` by

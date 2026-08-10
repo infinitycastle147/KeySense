@@ -167,4 +167,38 @@ describe("summary hallucination guard", () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  // The sign is load-bearing, not formatting. A live model wrote "accuracy
+  // declined by 0.4" against a profile holding accuracyDelta: -0.4 — correct
+  // prose, but the numeral does not match, and the guard cannot read direction
+  // out of English. Loosening this to compare magnitudes would also accept
+  // "accuracy improved by 0.4" on the same profile: a report claiming progress
+  // during a decline, which is the exact failure the guard exists to stop.
+  // The fix belongs in the prompt (cite deltas with their sign), not here.
+  it("rejects a negative profile value cited without its sign", () => {
+    const withTrend = [...allowed, -0.4];
+    const result = validateReport(
+      {
+        summary: "Speed is up, though accuracy declined by 0.4 percentage points.",
+        findings: [validFinding()],
+      },
+      withTrend,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.rejectedFindings?.[0]).toContain("0.4");
+    }
+  });
+
+  it("accepts the same figure once the sign is carried into the numeral", () => {
+    const withTrend = [...allowed, -0.4];
+    const result = validateReport(
+      {
+        summary: "Speed is up; accuracy changed by -0.4 percentage points.",
+        findings: [validFinding()],
+      },
+      withTrend,
+    );
+    expect(result.ok).toBe(true);
+  });
 });
